@@ -1,0 +1,71 @@
+# Stage 2: Finetune Conditional Generator
+model_id: "runwayml/stable-diffusion-v1-5"
+stage: 2
+stage1_checkpoint_path: "output/stage1/best_model.ckpt" # TODO: Change this if your best model has a different name
+
+# Vision backbone configuration (should match Stage 1 if loading Stage 1 checkpoint)
+# Options: 'convnext_base', 'eva02_small_patch16_xattn_fusedLN_SwiGLU_preln_RoPE', 
+#          'eva02_base_patch16_xattn_fusedLN_NaiveSwiGLU_subln_RoPE', etc.
+vision_backbone: "convnext_base"  # Change to EVA-X model name if using EVA-X
+pretrained: true  # Set to false if not using pretrained weights
+eva_x_weights_path: null  # Path to EVA-X pretrained weights (e.g., "path/to/eva_x_small_patch16_merged520k_mim_cxr14_ft.pth")
+# Note: EVA-X model code is now included in the project (models/models_eva.py), so eva_x_model_path is no longer needed
+
+# Data paths
+# The training sample pickle already contains both lab sequences and image paths.
+train_lab_test_pkl_path: "data/train_data_for_gen_develop.pkl"
+val_lab_test_pkl_path: "data/val_data_for_gen_develop.pkl"
+test_lab_test_pkl_path: "data/test_data_for_gen_develop.pkl"
+
+# Graph path
+graph_path: "graph/organ_graph.json"
+
+# Model architecture parameters
+lab_feat_dim: 512
+abn_feat_dim: 512
+organ_feat_dim: 512
+num_abnormalities: 12
+
+# Knowledge-guided text encoder (concept embedding) configuration
+knowledge_use_text_encoder: true
+knowledge_text_encoder_model_name: "neuml/pubmedbert-base-embeddings"
+knowledge_concept_emb_dim: 768
+knowledge_text_max_length: 512
+# If true, loads concept buffers from Stage 1 checkpoint.
+# If false (recommended for switching encoder), keep current precomputed PubMedBERT concept buffers.
+reuse_knowledge_concept_buffers_from_ckpt: false
+
+# Ref image adapter configuration
+use_ref_adapter: true
+adapter_model_id: null
+adapter_pretrained_path: null
+adapter_type: "full_adapter"
+adapter_in_channels: 3
+adapter_channels: [320, 640, 1280, 1280]
+adapter_num_res_blocks: 2
+adapter_downscale_factor: 8
+adapter_conditioning_scale: 1.0
+freeze_ref_adapter: false
+train_adapter_only: false
+freeze_unet_backbone: false
+
+# Trajectory encoder parameters
+trajectory_num_layers: 3
+gnn_num_layers: 2
+num_heads: 4
+dropout: 0.1
+
+# Time point selection parameters
+time_selector_hidden_dim: 64
+time_selector_num_layers: 3
+
+# Training params
+output_dir: "output/stage2"
+log_dir: "logs/stage2"
+batch_size: 8
+num_workers: 4
+learning_rate: 5e-5
+adapter_learning_rate: 1e-4
+unet_learning_rate: 2e-5
+epochs: 100
+seed: 42

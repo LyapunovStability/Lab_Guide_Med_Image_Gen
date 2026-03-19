@@ -1,0 +1,24 @@
+# Core training stack (Torch/TorchVision are installed by install_linux.sh)
+pytorch-lightning==2.2.4
+diffusers==0.27.2
+transformers==4.38.2
+accelerate==0.28.0
+timm==0.9.16
+einops==0.7.0
+tensorboard==2.16.2
+safetensors==0.4.2
+huggingface-hub==0.22.2
+
+# Data and scientific stack
+PyYAML==6.0.2
+numpy==1.26.4
+pandas==2.1.4
+scipy==1.11.4
+scikit-learn==1.3.2
+tqdm==4.66.4
+packaging==24.0
+
+# Imaging and visualization
+Pillow==10.2.0
+matplotlib==3.8.3
+opencv-python-headless==4.9.0.80

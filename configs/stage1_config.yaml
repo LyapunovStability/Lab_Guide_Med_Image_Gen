@@ -1,0 +1,51 @@
+# Stage 1: Train Lab Test Encoder to predict CXR features
+model_id: "runwayml/stable-diffusion-v1-5"
+stage: 1
+
+# Vision backbone configuration
+# Options: 'convnext_base', 'eva02_small_patch16_xattn_fusedLN_SwiGLU_preln_RoPE', 
+#          'eva02_base_patch16_xattn_fusedLN_NaiveSwiGLU_subln_RoPE', etc.
+vision_backbone: "convnext_base"  # Change to EVA-X model name if using EVA-X
+pretrained: true  # Set to false if not using pretrained weights
+eva_x_weights_path: null  # Path to EVA-X pretrained weights (e.g., "path/to/eva_x_small_patch16_merged520k_mim_cxr14_ft.pth")
+# Note: EVA-X model code is now included in the project (models/models_eva.py), so eva_x_model_path is no longer needed
+
+# Data paths
+# The training sample pickle already contains both lab sequences and image paths.
+train_lab_test_pkl_path: "data/train_data_for_gen_develop.pkl"
+val_lab_test_pkl_path: "data/val_data_for_gen_develop.pkl"
+test_lab_test_pkl_path: "data/test_data_for_gen_develop.pkl"
+
+# Graph path
+graph_path: "graph/organ_graph.json"
+
+# Model architecture parameters
+lab_feat_dim: 512
+abn_feat_dim: 512
+organ_feat_dim: 512
+num_abnormalities: 12
+
+# Knowledge-guided text encoder (concept embedding) configuration
+knowledge_use_text_encoder: true
+knowledge_text_encoder_model_name: "neuml/pubmedbert-base-embeddings"
+knowledge_concept_emb_dim: 768
+knowledge_text_max_length: 512
+
+# Trajectory encoder parameters
+trajectory_num_layers: 3
+gnn_num_layers: 2
+num_heads: 4
+dropout: 0.1
+
+# Time point selection parameters
+time_selector_hidden_dim: 64
+time_selector_num_layers: 3
+
+# Training params
+output_dir: "output/stage1"
+log_dir: "logs/stage1"
+batch_size: 16
+num_workers: 4
+learning_rate: 1e-4
+epochs: 50
+seed: 42

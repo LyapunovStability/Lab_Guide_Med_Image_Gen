@@ -1,0 +1,57 @@
+# Inference Configuration for Generator
+
+# Pretrained Stable Diffusion Model
+model_id: "runwayml/stable-diffusion-v1-5"
+
+# Stage identifier (Inference uses Stage 2 logic)
+stage: 2
+
+# Vision backbone configuration (Must match the trained checkpoint)
+vision_backbone: "convnext_base"
+pretrained: true
+eva_x_weights_path: null
+
+# Graph path
+graph_path: "graph/organ_graph.json"
+
+# Model architecture parameters (Must match the trained checkpoint)
+lab_feat_dim: 512
+abn_feat_dim: 512
+organ_feat_dim: 512
+num_abnormalities: 12
+
+# Knowledge-guided text encoder (concept embedding) configuration
+# Must match the trained checkpoint setup.
+knowledge_use_text_encoder: true
+knowledge_text_encoder_model_name: "neuml/pubmedbert-base-embeddings"
+knowledge_concept_emb_dim: 768
+knowledge_text_max_length: 512
+
+# Ref image adapter configuration (Must match the trained checkpoint)
+use_ref_adapter: true
+adapter_model_id: null
+adapter_pretrained_path: null
+adapter_type: "full_adapter"
+adapter_in_channels: 3
+adapter_channels: [320, 640, 1280, 1280]
+adapter_num_res_blocks: 2
+adapter_downscale_factor: 8
+adapter_conditioning_scale: 1.0
+# Usually keep adapter source null at inference when loading a full Stage 2 checkpoint.
+# Only set one of these if you intentionally want to initialize adapter weights externally.
+
+# Trajectory encoder parameters (Must match the trained checkpoint)
+trajectory_num_layers: 3
+gnn_num_layers: 2
+num_heads: 4
+dropout: 0.1
+
+# Sampling parameters
+num_inference_steps: 50
+
+# Data processing parameters
+resize: 512
+crop: 512
+num_workers: 4
+
+# Note: Input data path and output directory are passed as command line arguments to inference.py

@@ -1,0 +1,462 @@
+[
+    {
+      "id": "Alanine aminotransferase",
+      "relation": [
+        ["Alanine aminotransferase", "reflects the hepatocellular integrity function of", "liver"],
+        ["Alanine aminotransferase", "reflects the cardiomyocyte integrity function of", "heart"]
+      ]
+    },
+    {
+      "id": "Albumin",
+      "relation": [
+        ["Albumin", "reflects the synthetic protein production function of", "liver"],
+        ["Albumin", "reflects the oncotic pressure maintenance function of", "blood"],
+        ["Albumin", "reflects the glomerular barrier integrity function of", "kidney"]
+      ]
+    },
+    {
+      "id": "Alkaline phosphate",
+      "relation": [
+        ["Alkaline phosphate", "reflects the biliary excretory (cholestatic) function of", "liver"],
+        ["Alkaline phosphate", "reflects the intestinal brush-border enzyme function of", "colon"],
+        ["Alkaline phosphate", "reflects the tubular brush-border enzyme function of", "kidney"]
+      ]
+    },
+    {
+      "id": "Anion Gap",
+      "relation": [
+        ["Anion Gap", "reflects the metabolic acid-base regulation function of", "kidney"],
+        ["Anion Gap", "reflects the acid-base buffering function of", "blood"]
+      ]
+    },
+    {
+      "id": "Asparate aminotransferase",
+      "relation": [
+        ["Asparate aminotransferase", "reflects the hepatocellular integrity function of", "liver"],
+        ["Asparate aminotransferase", "reflects the cardiomyocyte integrity function of", "heart"]
+      ]
+    },
+    {
+      "id": "Base Excess",
+      "relation": [
+        ["Base Excess", "reflects the metabolic acid-base regulation function of", "kidney"],
+        ["Base Excess", "reflects the acid-base buffering function of", "blood"]
+      ]
+    },
+    {
+      "id": "Basophils",
+      "relation": [
+        ["Basophils", "reflects the immune cell composition function of", "blood"],
+        ["Basophils", "reflects the reticuloendothelial immune clearance function of", "liver"]
+      ]
+    },
+    {
+      "id": "Bicarbonate",
+      "relation": [
+        ["Bicarbonate", "reflects the metabolic acid-base regulation function of", "kidney"],
+        ["Bicarbonate", "reflects the acid-base buffering function of", "blood"],
+        ["Bicarbonate", "reflects the alveolar ventilation function of", "lung"]
+      ]
+    },
+    {
+      "id": "Bilirubin",
+      "relation": [
+        ["Bilirubin", "reflects the conjugation and excretory function of", "liver"],
+        ["Bilirubin", "reflects the hemoglobin catabolism function of", "spleen"]
+      ]
+    },
+    {
+      "id": "Blood urea nitrogen",
+      "relation": [
+        ["Blood urea nitrogen", "reflects the nitrogenous waste excretory function of", "kidney"],
+        ["Blood urea nitrogen", "reflects the urea synthesis function of", "liver"],
+        ["Blood urea nitrogen", "reflects the nitrogenous waste transport function of", "blood"]
+      ]
+    },
+    {
+      "id": "Calcium Free",
+      "relation": [
+        ["Calcium Free", "reflects the electrolyte homeostasis function of", "kidney"],
+        ["Calcium Free", "reflects the myocardial electrophysiological excitability function of", "heart"],
+        ["Calcium Free", "reflects the neuromuscular excitability function of", "brain"]
+      ]
+    },
+    {
+      "id": "Calcium Total",
+      "relation": [
+        ["Calcium Total", "reflects the electrolyte homeostasis function of", "kidney"],
+        ["Calcium Total", "reflects the myocardial electrophysiological excitability function of", "heart"],
+        ["Calcium Total", "reflects the neuromuscular excitability function of", "brain"]
+      ]
+    },
+    {
+      "id": "Chloride",
+      "relation": [
+        ["Chloride", "reflects the electrolyte homeostasis function of", "kidney"],
+        ["Chloride","reflects the creatine synthesis baseline production function of", "liver"]
+      ]
+    },
+    {
+      "id": "Creatinine Blood",
+      "relation": [
+        ["Creatinine Blood", "reflects the glomerular filtration function of", "kidney"]
+      ]
+    },
+    {
+      "id": "Creatinine Urine",
+      "relation": [
+        ["Creatinine Urine", "reflects the renal clearance/excretory function of", "kidney"],
+        ["Creatinine Urine", "reflects the creatine synthesis baseline production function of", "liver"]
+      ]
+    },
+    {
+      "id": "Diastolic blood pressure",
+      "relation": [
+        ["Diastolic blood pressure", "reflects the cardiac pump function of", "heart"],
+        ["Diastolic blood pressure", "reflects the renal perfusion pressure autoregulation function of", "kidney"]
+      ]
+    },
+    {
+      "id": "Eosinophils",
+      "relation": [
+        ["Eosinophils", "reflects the immune cell composition function of", "blood"],
+        ["Eosinophils", "reflects the reticuloendothelial immune clearance function of", "liver"]
+      ]
+    },
+    {
+      "id": "FiO2",
+      "relation": [
+        ["FiO2", "reflects the unknown of", "blood"]
+      ]
+    },
+    {
+      "id": "Glucose",
+      "relation": [
+        ["Glucose", "reflects the endocrine insulin/glucagon regulation function of", "pancreas"],
+        ["Glucose", "reflects the glucose metabolism function of", "liver"],
+        ["Glucose", "reflects the metabolic fuel transport function of", "blood"]
+      ]
+    },
+    {
+      "id": "Heart rate",
+      "relation": [
+        ["Heart rate", "reflects the chronotropic pump function of", "heart"]
+      ]
+    },
+    {
+      "id": "Hematocrit",
+      "relation": [
+        ["Hematocrit", "reflects the oxygen-carrying capacity function of", "blood"],
+        ["Hematocrit", "reflects the RBC sequestration and clearance function of", "spleen"]
+      ]
+    },
+    {
+      "id": "Hemoglobin",
+      "relation": [
+        ["Hemoglobin", "reflects the oxygen-carrying capacity function of", "blood"],
+        ["Hemoglobin", "reflects the hemoglobin-containing RBC turnover function of", "spleen"]
+      ]
+    },
+    {
+      "id": "INR",
+      "relation": [
+        ["INR", "reflects the coagulation factor synthetic function of", "liver"],
+        ["INR", "reflects the coagulation function of", "blood"]
+      ]
+    },
+    {
+      "id": "Lactate dehydrogenase",
+      "relation": [
+        ["Lactate dehydrogenase", "reflects the unknown of", "blood"],
+        ["Lactate dehydrogenase", "reflects the hepatocellular injury and metabolic turnover function of", "liver"]
+      ]
+    },
+    {
+      "id": "Lactate",
+      "relation": [
+        ["Lactate", "reflects the systemic tissue hypoxia and anaerobic metabolism function of", "blood"]
+      ]
+    },
+    {
+      "id": "Lymphocytes",
+      "relation": [
+        ["Lymphocytes", "reflects the immune cell composition function of", "blood"],
+        ["Lymphocytes", "reflects the reticuloendothelial immune surveillance function of", "liver"]
+      ]
+    },
+    {
+      "id": "Lymphocytes (Absolute)",
+      "relation": [
+        ["Lymphocytes (Absolute)", "reflects the immune cell composition function of", "blood"],
+        ["Lymphocytes (Absolute)", "reflects the reticuloendothelial immune surveillance function of", "liver"]
+      ]
+    },
+    {
+      "id": "Mean Corpuscular Hemoglobin",
+      "relation": [
+        ["Mean Corpuscular Hemoglobin", "reflects the erythrocyte indices function of", "blood"],
+        ["Mean Corpuscular Hemoglobin", "reflects the RBC maturation and clearance quality control function of", "spleen"]
+      ]
+    },
+    {
+      "id": "Mean Corpuscular Hemoglobin Concentration",
+      "relation": [
+        ["Mean Corpuscular Hemoglobin Concentration", "reflects the erythrocyte indices function of", "blood"]
+      ]
+    },
+    {
+      "id": "Mean Corpuscular Volume",
+      "relation": [
+        ["Mean Corpuscular Volume", "reflects the erythrocyte indices function of", "blood"]
+      ]
+    },
+    {
+      "id": "Magnesium",
+      "relation": [
+        ["Magnesium", "reflects the electrolyte homeostasis function of", "kidney"],
+        ["Magnesium", "reflects the electrophysiological stability function of", "heart"],
+        ["Magnesium", "reflects the neuromuscular excitability function of", "brain"]
+      ]
+    },
+    {
+      "id": "Mean blood pressure",
+      "relation": [
+        ["Mean blood pressure", "reflects the cardiac pump function of", "heart"],
+        ["Mean blood pressure", "reflects the renal perfusion and autoregulation function of", "kidney"],
+        ["Mean blood pressure", "reflects the cerebral perfusion pressure function of", "brain"]
+      ]
+    },
+    {
+      "id": "Monocytes",
+      "relation": [
+        ["Monocytes", "reflects the immune cell composition function of", "blood"],
+        ["Monocytes", "reflects the monocyte reservoir and immune modulation function of", "spleen"],
+        ["Monocytes", "reflects the reticuloendothelial phagocytic function of", "liver"]
+      ]
+    },
+    {
+      "id": "Neutrophils",
+      "relation": [
+        ["Neutrophils", "reflects the immune cell composition function of", "blood"],
+        ["Neutrophils", "reflects the immune modulation and clearance function of", "spleen"],
+        ["Neutrophils", "reflects the reticuloendothelial pathogen clearance function of", "liver"]
+      ]
+    },
+    {
+      "id": "O2 Saturation",
+      "relation": [
+        ["O2 Saturation", "reflects the oxygenation function of", "lung"],
+        ["O2 Saturation", "reflects the oxygen-carrying function of", "blood"]
+      ]
+    },
+    {
+      "id": "Prothrombin Time Test",
+      "relation": [
+        ["Prothrombin Time Test", "reflects the coagulation factor synthetic function of", "liver"],
+        ["Prothrombin Time Test", "reflects the coagulation function of", "blood"]
+      ]
+    },
+    {
+      "id": "Partial pressure of carbon dioxide",
+      "relation": [
+        ["Partial pressure of carbon dioxide", "reflects the ventilation function of", "lung"],
+        ["Partial pressure of carbon dioxide", "reflects the respiratory center chemosensitivity function of", "brain"],
+        ["Partial pressure of carbon dioxide", "reflects the acid-base buffering function of", "blood"]
+      ]
+    },
+    {
+      "id": "Partial pressure of oxygen",
+      "relation": [
+        ["Partial pressure of oxygen", "reflects the oxygenation function of", "lung"],
+        ["Partial pressure of oxygen", "reflects the oxygen-carrying capacity function of", "blood"]
+      ]
+    },
+    {
+      "id": "Partial thromboplastin time",
+      "relation": [
+        ["Partial thromboplastin time", "reflects the coagulation factor synthetic function of", "liver"],
+        ["Partial thromboplastin time", "reflects the coagulation function of", "blood"]
+      ]
+    },
+    {
+      "id": "Phosphate",
+      "relation": [
+        ["Phosphate", "reflects the mineral homeostasis function of", "kidney"],
+        ["Phosphate", "reflects the cellular energy (ATP) metabolism function of", "brain"],
+        ["Phosphate", "reflects the myocardial energy metabolism function of", "heart"]
+      ]
+    },
+    {
+      "id": "Potassium",
+      "relation": [
+        ["Potassium", "reflects the electrolyte homeostasis function of", "kidney"],
+        ["Potassium", "reflects the myocardial electrophysiological excitability function of", "heart"],
+        ["Potassium", "reflects the neuromuscular excitability function of", "brain"]
+      ]
+    },
+    {
+      "id": "Platelet Count",
+      "relation": [
+        ["Platelet Count", "reflects the primary hemostasis function of", "blood"],
+        ["Platelet Count", "reflects the platelet sequestration and removal function of", "spleen"],
+        ["Platelet Count", "reflects the thrombopoietin-mediated platelet production support function of", "liver"]
+      ]
+    },
+    {
+      "id": "Red Cell Distribution Width",
+      "relation": [
+        ["Red Cell Distribution Width", "reflects the erythrocyte size heterogeneity function of", "blood"],
+        ["Red Cell Distribution Width", "reflects the erythropoietin production function of", "kidney"],
+        ["Red Cell Distribution Width", "reflects the selective clearance of abnormal RBCs function of", "spleen"]
+      ]
+    },
+    {
+      "id": "Red blood cell count",
+      "relation": [
+        ["Red blood cell count", "reflects the oxygen-carrying capacity function of", "blood"],
+        ["Red blood cell count", "reflects the erythropoietin production function of", "kidney"],
+        ["Red blood cell count", "reflects the selective clearance of abnormal RBCs function of", "spleen"]
+      ]
+    },
+    {
+      "id": "Respiratory rate",
+      "relation": [
+        ["Respiratory rate", "reflects the ventilation function of", "lung"],
+        ["Respiratory rate", "reflects the central respiratory drive function of", "brain"]
+      ]
+    },
+    {
+      "id": "SG Urine",
+      "relation": [
+        ["SG Urine", "reflects the urine concentrating (tubular) function of", "kidney"]
+      ]
+    },
+    {
+      "id": "Sodium",
+      "relation": [
+        ["Sodium", "reflects the electrolyte homeostasis function of", "kidney"]
+      ]
+    },
+    {
+      "id": "Systolic blood pressure",
+      "relation": [
+        ["Systolic blood pressure", "reflects the cardiac pump function of", "heart"],
+        ["Systolic blood pressure", "reflects the renal perfusion pressure function of", "kidney"],
+        ["Systolic blood pressure", "reflects the cerebral perfusion function of", "brain"]
+      ]
+    },
+    {
+      "id": "Temperature",
+      "relation": [
+        ["Temperature", "reflects the thermoregulatory set point function of", "brain"]
+      ]
+    },
+    {
+      "id": "Total CO2",
+      "relation": [
+        ["Total CO2", "reflects the acid-base buffering function of", "blood"],
+        ["Total CO2", "reflects the CO2 elimination function of", "lung"],
+        ["Total CO2", "reflects the metabolic acid-base regulation function of", "kidney"]
+      ]
+    },
+    {
+      "id": "White blood cell count",
+      "relation": [
+        ["White blood cell count", "reflects the immune cell composition function of", "blood"],
+        ["White blood cell count", "reflects the immune modulation and sequestration function of", "spleen"],
+        ["White blood cell count", "reflects the reticuloendothelial immune clearance function of", "liver"]
+      ]
+    },
+    {
+      "id": "pH Blood",
+      "relation": [
+        ["pH Blood", "reflects the ventilation (acid removal) function of", "lung"],
+        ["pH Blood", "reflects the metabolic acid-base regulation function of", "kidney"],
+        ["pH Blood", "reflects the acid-base buffering function of", "blood"]
+      ]
+    },
+    {
+      "id": "pH Urine",
+      "relation": [
+        ["pH Urine", "reflects the acid excretion function of", "kidney"],
+        ["pH Urine", "reflects the systemic acid-base status reflection function of", "blood"],
+        ["pH Urine", "reflects the respiratory acid-base compensation influence function of", "lung"]
+      ]
+    },
+    {
+        "id": "Atelectasis",
+        "relation": [
+          ["Atelectasis", "reflects the alveolar ventilation function of", "lung"]
+        ]
+    },
+      {
+        "id": "Cardiomegaly",
+        "relation": [
+          ["Cardiomegaly", "reflects the cardiac structural size and pump function of", "heart"]
+        ]
+      },
+      {
+        "id": "Consolidation",
+        "relation": [
+          ["Consolidation", "reflects the alveolar gas exchange function of", "lung"]
+        ]
+      },
+      {
+        "id": "Edema",
+        "relation": [
+          ["Edema", "reflects the interstitial/alveolar fluid clearance function of", "lung"],
+          ["Edema", "reflects the cardiac filling pressure and pump function of", "heart"],
+          ["Edema", "reflects the sodium-water balance function of", "kidney"]
+        ]
+      },
+      {
+        "id": "Enlarged Cardiomediastinum",
+        "relation": [
+          ["Enlarged Cardiomediastinum", "reflects the cardiac and mediastinal structural size function of", "heart"]
+        ]
+      },
+      {
+        "id": "Fracture",
+        "relation": [
+          ["Fracture", "reflects the thoracic structural integrity function of", "lung"]
+        ]
+      },
+      {
+        "id": "Lung Lesion",
+        "relation": [
+          ["Lung Lesion", "reflects the parenchymal integrity function of", "lung"]
+        ]
+      },
+      {
+        "id": "Lung Opacity",
+        "relation": [
+          ["Lung Opacity", "reflects the aeration and ventilation function of", "lung"]
+        ]
+      },
+      {
+        "id": "Pleural Effusion",
+        "relation": [
+          ["Pleural Effusion", "reflects the pleural space fluid homeostasis function of", "lung"],
+          ["Pleural Effusion", "reflects the cardiac filling pressure function of", "heart"],
+          ["Pleural Effusion", "reflects the portal pressure regulation and albumin synthetic function of", "liver"]
+        ]
+      },
+      {
+        "id": "Pleural Other",
+        "relation": [
+          ["Pleural Other", "reflects the pleural space integrity function of", "lung"]
+        ]
+      },
+      {
+        "id": "Pneumonia",
+        "relation": [
+          ["Pneumonia", "reflects the alveolar inflammation and gas exchange function of", "lung"]
+        ]
+      },
+      {
+        "id": "Pneumothorax",
+        "relation": [
+          ["Pneumothorax", "reflects the pleural integrity and ventilation function of", "lung"]
+        ]
+      }
+  ]
