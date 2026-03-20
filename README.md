@@ -31,7 +31,7 @@ Default environment is Linux.
 Required versions:
 
 - Python: `3.10`
-- PyTorch: `2.2.x` (recommended: `torch==2.2.2`, `torchvision==0.17.2`)
+- PyTorch: `2.4.x` (recommended: `torch==2.4.0`, `torchvision==0.19.0`)
 
 ```bash
 python -m pip install --upgrade pip
