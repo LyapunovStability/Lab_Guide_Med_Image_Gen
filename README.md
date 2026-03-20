@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Laboratory Test-Guided Medical Image Generation for Multi-Modal Disease Prediction
 
 This repository contains the implementation of **Laboratory Test-Guided Medical Image Generation for Multi-Modal Disease Prediction**.
@@ -139,10 +138,3 @@ python smoke_test.py --run-training-smoke --stage all
 - Architecture description: `docs/architecture.md`
 - Training/inference workflow: `docs/workflow.md`
 - Pre-training verification checklist: `docs/verification_checklist.md`
-
-=======
-# Lab_Guide_Med_Image_Gen
-An organ-centric, lab-test-guided longitudinal medical image generator
-
-The code will be made publicly available soon.
->>>>>>> 8f0fef4ad2a38955299be9dfea3ab35011637255
