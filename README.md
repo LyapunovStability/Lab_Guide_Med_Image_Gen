@@ -11,22 +11,23 @@ Inspired by the pivotal role of **organs** in mediating laboratory tests and ima
 > The core logical structure of this project is shown below (subject to your local codebase).
 
 ```text
-Med_Lab_Image_Generator/
-|- configs/                      # Stage1/Stage2/Inference YAML configs
+Lab_Guided_Med_Image_Syn
+|- checkpoints/                  # Downloaded pretrained weights (image encoder, diffusion, text encoder etc.)
+|- configs/                      # Stage 1 / Stage 2 / inference YAML configs
+|- data/                         # Example pickles and data layout (see data_example.py)
 |- datasets/                     # DataLoader and collate logic
-|- graph/                        # Organ graph and prior knowledge
-|- models/                       # Encoders, trajectory, diffusion pipeline
-|- utils/                        # Utility scripts (e.g., time-point selection)
-|- train.py                      # Training entry point (Stage 1 / Stage 2)
-|- inference.py                  # Inference entry point
+|- graph/                        # Organ graph assets, construction scripts, prior knowledge
+|- models/                       # Encoders, trajectory, organ graph modules, diffusion pipeline
+|- prediction/                   # Post-generation disease prediction (configs, models, train/infer)
+|- utils/                        # Helpers (time-point selection, EVA-X checkpoint, project paths)
+|- train.py                      # Image generator training (Stage 1 / Stage 2)
+|- inference.py                  # Image generator inference entry point
 |- run_simulated_training.py     # Simulated-data training smoke test
 |- smoke_test.py                 # Dependency/file checks + optional smoke training
 `- requirements.txt              # Python dependencies
 ```
 
 ## Environment Setup
-
-Default environment is Linux.
 
 Required versions:
 
@@ -38,19 +39,37 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
+## Pretrained Model Checkpoints
+
+Training and inference expect **third-party pretrained weights**, including (as applicable) the **text encoder**, **image encoder**, and **diffusion** checkpoints.
+
+Download the bundle from Baidu Netdisk:
+
+- [Pretrained checkpoints](https://pan.baidu.com/s/1kRT0zxeAj_oq8qq9V6sVtg?pwd=7c5t) (extraction code: `7c5t`)
+
+After downloading, extract or copy the files into the repository’s **`checkpoints/`** directory so default config paths resolve correctly.
+
 
 ## Data Preparation
 
-1. Download the data from the following link:
+### 1. Raw data (MIMIC)
 
-```bash
-https://physionet.org/content/mimic-cxr/2.0.0/
-https://physionet.org/content/mimiciv/
-```
+This project builds on **MIMIC-CXR** (chest X-rays) and **MIMIC-IV** (laboratory tests and clinical tables). Both require a PhysioNet account and credentialed access:
 
-2. Prepare the data for training and inference.
+- [MIMIC-CXR v2.0.0](https://physionet.org/content/mimic-cxr/2.0.0/)
+- [MIMIC-IV](https://physionet.org/content/mimiciv/)
 
-（正在整理中）
+Scripts that turn official MIMIC exports into the project’s pickle format are **still being organized**; when they are added, they will live alongside the dataloader under `datasets/` and this section will be updated.
+
+### 3. Preprocessed data (optional shortcut)
+
+You can skip raw preprocessing and download **preprocessed image + lab** assets from the following link:
+
+- Link: [https://pan.baidu.com/s/11ufoXkwrmFHfuvxWxaKCVA](https://pan.baidu.com/s/11ufoXkwrmFHfuvxWxaKCVA)
+
+After downloading, **extract the archive into the project’s `data/` directory** (so paths line up with configs and examples).
+
+For field names, tensor shapes, and per-patient dictionary structure in the preprocessed data, see **`data/data_example.py`** (reference implementation and comments).
 
 ## Image Generator Training
 
@@ -103,11 +122,28 @@ python inference.py \
 
 ## Disease Prediction based on the generated images (after inference)
 
-（正在整理中）
+After Inference Generation, the image generator writes a pickle with synthesized CXRs and their time points (default path: `data/data_for_gen_infer_with_tar_img.pkl`). 
+
+Take disease prediction for the above data based on the two models available in `prediction/` directory:
+
+
+```bash
+# Train & Evaluate the TDsig model
+python prediction/train_disease_prediction.py --config prediction/configs/model_tdsig.yaml
+python prediction/infer_disease_prediction.py --checkpoint output/prediction_tdsig/best_model.pt \
+  --input_pkl data/data_for_gen_infer_with_tar_img.pkl --output_pkl data/data_for_pred_infer_with_outputs.pkl
+
+# Train & Evaluate the TNformer model
+python prediction/train_disease_prediction.py --config prediction/configs/model_tnformer.yaml
+python prediction/infer_disease_prediction.py --checkpoint output/prediction_tnformer/best_model.pt \
+  --input_pkl data/data_for_gen_infer_with_tar_img.pkl --output_pkl data/data_for_pred_infer_with_outputs.pkl
+```
+
 
 ----
 
-## Quick Smoke Test（自动生成模拟数据，快速验证训练流程是否可在当前环境中正常运行）
+
+## Quick Smoke Test (auto-generated simulated data; quick check that training runs in your environment)
 
 A new `smoke_test.py` is included for:
 

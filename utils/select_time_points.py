@@ -70,16 +70,29 @@ def select_time_points_for_patients(
         for patient_id in tqdm(patient_ids):
             patient_data = lab_test_data[patient_id]
             
-            # Extract lab data and time points
-            lab_data = patient_data['lab_data']  # Shape: (seq_length, num_lab_tests)
-            time_points = patient_data['time']    # Shape: (seq_length,)
-            mask = patient_data.get('mask', None)  # Optional mask
-            
+            # Extract lab data and time points from current project schema.
+            lab_data = patient_data.get('lab_test_data')
+            time_points = patient_data.get('lab_test_time')
+            _mask = patient_data.get('lab_test_mask', None)  # Optional, reserved for future use.
+
+            if lab_data is None or time_points is None:
+                available_keys = sorted(list(patient_data.keys()))
+                raise KeyError(
+                    f"Missing required lab/time fields for patient `{patient_id}`. "
+                    "Expected fields: (`lab_test_data`, `lab_test_time`). "
+                    f"Available keys: {available_keys}"
+                )
+
             # Convert to tensors
             if isinstance(lab_data, np.ndarray):
                 lab_data = torch.from_numpy(lab_data).float()
+            elif not torch.is_tensor(lab_data):
+                lab_data = torch.as_tensor(lab_data, dtype=torch.float32)
+
             if isinstance(time_points, np.ndarray):
                 time_points = torch.from_numpy(time_points).float()
+            elif not torch.is_tensor(time_points):
+                time_points = torch.as_tensor(time_points, dtype=torch.float32)
             
             # Ensure time_points is 2D (batch_size=1, seq_length)
             if time_points.dim() == 1:
@@ -219,42 +232,5 @@ def run_time_point_selection(
         merge_with_data=merge_with_data
     )
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Select generation time points (T_gen) for each patient.")
-    parser.add_argument('--config', type=str, default=None, help='Path to YAML config file (optional).')
-    parser.add_argument('--lab_test_data_path', type=str, default=None, help='Path to lab test pickle file.')
-    parser.add_argument('--output_path', type=str, default=None, help='Path to save selected time points.')
-    parser.add_argument('--num_gen_points', type=int, default=3, help='Number of generation time points per patient.')
-    parser.add_argument('--hidden_dim', type=int, default=64, help='Hidden dimension for ODE network.')
-    parser.add_argument('--num_ode_layers', type=int, default=3, help='Number of ODE layers.')
-    parser.add_argument('--peak_prominence', type=float, default=0.1, help='Minimum prominence for peak detection.')
-    parser.add_argument('--peak_distance', type=int, default=1, help='Minimum distance between detected peaks.')
-    parser.add_argument('--device', type=str, default='cpu', choices=['cpu', 'cuda'], help='Device for computation.')
-    parser.add_argument('--output_format', type=str, default='pkl', choices=['pkl', 'csv'], help='Output format.')
-    parser.add_argument(
-        '--merge_with_data',
-        action='store_true',
-        help='Merge selected target points into original data as "target_image_time_list".'
-    )
-    return parser.parse_args()
 
 
-def main():
-    args = parse_args()
-    run_time_point_selection(
-        config=args.config,
-        lab_test_data_path=args.lab_test_data_path,
-        output_path=args.output_path,
-        num_gen_points=args.num_gen_points,
-        hidden_dim=args.hidden_dim,
-        num_ode_layers=args.num_ode_layers,
-        peak_prominence=args.peak_prominence,
-        peak_distance=args.peak_distance,
-        device=args.device,
-        output_format=args.output_format,
-        merge_with_data=args.merge_with_data
-    )
-
-
-if __name__ == '__main__':
-    main()

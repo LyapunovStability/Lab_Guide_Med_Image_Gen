@@ -2,106 +2,130 @@ import pytorch_lightning as pl
 import timm
 import torch
 import torch.nn as nn
-import os
+import torch.nn.functional as F
+
+import utils.models_eva  # noqa: F401 — registers EVA timm models
+from utils.eva_x_ckpt import (
+    EVA_X_B_TIMM_NAME,
+    EVA_X_INPUT_SIZE,
+    apply_pretrained_to_eva_model,
+    is_cxr_encoder_finetune_bundle,
+    load_backbone_state_dict,
+    resolve_eva_x_weights_path,
+)
+
 
 class CXR_Encoder(pl.LightningModule):
-    def __init__(self,
-                 task='na',
-                 vision_backbone='convnext_base',
-                 pretrained=True,
-                 num_abnormalities=12,
-                 feature_dim=512,
-                 eva_x_weights_path=None,
-                 eva_x_model_path=None,
-                 ):
-        
+    """Chest X-ray encoder fixed to EVA-X-B (ViT-B/16).
+
+    Model card and pretrained checkpoints: https://huggingface.co/MapleF/eva_x
+    (default local file: ``eva_x_base_patch16_merged520k_mim_weights_only.pt``; see ``cxr_encoder_weights_path`` in config).
+
+    You may also set ``cxr_encoder_weights_path`` to the ``.pt`` from
+    ``finetune_cxr_encoder_chexpert.py``: same layout as official EVA (key ``model`` for the ViT)
+    plus ``abnormality_projection`` for the MLP head. Legacy bundles with
+    ``cxr_encoder_state_dict`` are still accepted (``num_abnormalities`` / ``feature_dim`` must match).
+    """
+
+    def __init__(
+        self,
+        task="na",
+        pretrained=True,
+        num_abnormalities=12,
+        feature_dim=512,
+        weights_path=None,
+    ):
         super().__init__()
 
         self.task = task
         self.num_abnormalities = num_abnormalities
         self.feature_dim = feature_dim
-        
-        # Check if using EVA-X model
-        is_eva_x = vision_backbone.startswith('eva02_') or vision_backbone.startswith('eva_x')
-        
-        if is_eva_x:
-            # EVA-X models are stored in utils directory (external code from EVA-X project)
-            # Import models_eva to register models with timm
-            try:
-                import utils.models_eva as models_eva  # This registers the models with timm
-            except ImportError:
-                raise ImportError("Could not import utils.models_eva. Make sure models_eva.py is in the utils directory.")
-            
-            # Prepare kwargs for EVA-X initialization
-            eva_kwargs = {
-                'num_classes': 0,  # Remove classifier head
-                'img_size': 512,   # Match input image size
-                'use_mean_pooling': True,  # Get pooled features
-                'in_chans': 3
-            }
-            
-            # Add init_ckpt if pretrained weights are provided
-            if pretrained and eva_x_weights_path is not None:
-                if os.path.exists(eva_x_weights_path):
-                    eva_kwargs['init_ckpt'] = eva_x_weights_path
-                else:
-                    print(f"Warning: EVA-X weights path not found: {eva_x_weights_path}")
-                    pretrained = False
-            
-            # Create EVA-X model
-            self.vision_backbone = timm.create_model(
-                vision_backbone,
-                pretrained=pretrained,
-                **eva_kwargs
-            )
-        else:
-            # Standard timm model initialization
-            self.vision_backbone = timm.create_model(
-                vision_backbone,
-                pretrained=pretrained,
-                num_classes=0,  # Set num_classes to 0 to remove the classifier head
-                in_chans=3
-            )
-        
-        # Get the feature dimension from the backbone
+        self._eva_input_size = EVA_X_INPUT_SIZE
+
+        raw_ckpt = None
+        if pretrained:
+            ckpt_file = resolve_eva_x_weights_path(weights_path)
+            if not ckpt_file.is_file():
+                raise FileNotFoundError(
+                    f"EVA-X-B weights not found: {ckpt_file}. "
+                    "Download checkpoint into the default folder "
+                    "or set cxr_encoder_weights_path in config."
+                )
+            raw_ckpt = torch.load(ckpt_file, map_location="cpu")
+
+        self.vision_backbone = timm.create_model(
+            EVA_X_B_TIMM_NAME,
+            pretrained=False,
+            num_classes=0,
+            img_size=EVA_X_INPUT_SIZE,
+            use_mean_pooling=True,
+            in_chans=3,
+        )
+
+        if pretrained and raw_ckpt is not None and not is_cxr_encoder_finetune_bundle(raw_ckpt):
+            state_dict = load_backbone_state_dict(raw_ckpt)
+            apply_pretrained_to_eva_model(self.vision_backbone, state_dict)
+
         with torch.no_grad():
-            dummy_input = torch.zeros(1, 3, 512, 512)
+            dummy_input = torch.zeros(1, 3, EVA_X_INPUT_SIZE, EVA_X_INPUT_SIZE)
             backbone_feat = self.vision_backbone(dummy_input)
-            backbone_dim = backbone_feat.shape[1] if len(backbone_feat.shape) > 1 else backbone_feat.shape[-1]
-        
-        # Projection layer to map backbone features to abnormality features
-        # Output shape: (batch_size, num_abnormalities, feature_dim)
+            backbone_dim = (
+                backbone_feat.shape[1]
+                if len(backbone_feat.shape) > 1
+                else backbone_feat.shape[-1]
+            )
+
+        # Task-specific head (not in EVA-X ckpt). Trained in Stage 1 while the ViT stays frozen;
+        # Stage 2 should load these weights from the Stage 1 checkpoint.
         self.abnormality_projection = nn.Sequential(
             nn.Linear(backbone_dim, feature_dim * num_abnormalities),
             nn.ReLU(),
-            nn.Linear(feature_dim * num_abnormalities, num_abnormalities * feature_dim)
+            nn.Linear(feature_dim * num_abnormalities, num_abnormalities * feature_dim),
         )
-        
+
+        if pretrained and raw_ckpt is not None and is_cxr_encoder_finetune_bundle(raw_ckpt):
+            if isinstance(raw_ckpt.get("model"), dict) and isinstance(
+                raw_ckpt.get("abnormality_projection"), dict
+            ):
+                bb_sd = load_backbone_state_dict(raw_ckpt)
+                apply_pretrained_to_eva_model(self.vision_backbone, bb_sd)
+                msg = self.abnormality_projection.load_state_dict(
+                    raw_ckpt["abnormality_projection"], strict=False
+                )
+                print("CXR_Encoder (model + abnormality_projection) load:", msg)
+            else:
+                inner = raw_ckpt["cxr_encoder_state_dict"]
+                msg = self.load_state_dict(inner, strict=False)
+                print("CXR_Encoder (legacy cxr_encoder_state_dict) load_state_dict:", msg)
+
     def forward(self, x):
         """
         Extract imaging abnormality features from CXR images.
-        
+
         Args:
-            x: Input images of shape (batch_size, 3, 512, 512)
-        
+            x: Input images (B, 3, H, W). Resized internally to EVA-X pretrain size (224)
+               before the ViT; pipeline may still use e.g. 512 for diffusion.
+
         Returns:
-            features: Imaging abnormality features of shape (batch_size, num_abnormalities, feature_dim)
+            features: (batch_size, num_abnormalities, feature_dim)
         """
-        # Extract backbone features
+        h, w = x.shape[-2:]
+        if h != self._eva_input_size or w != self._eva_input_size:
+            x = F.interpolate(
+                x,
+                size=(self._eva_input_size, self._eva_input_size),
+                mode="bilinear",
+                align_corners=False,
+            )
         backbone_feat = self.vision_backbone(x)
-        
-        # Handle different output shapes from different backbones
+
         if len(backbone_feat.shape) == 4:
-            # If output is (B, C, H, W), global average pool
             backbone_feat = torch.mean(backbone_feat, dim=(2, 3))
         elif len(backbone_feat.shape) == 3:
-            # If output is (B, N, C), take mean over sequence dimension
             backbone_feat = torch.mean(backbone_feat, dim=1)
-        
-        # Project to abnormality features
+
         flat_features = self.abnormality_projection(backbone_feat)
-        
-        # Reshape to (batch_size, num_abnormalities, feature_dim)
-        features = flat_features.view(backbone_feat.shape[0], self.num_abnormalities, self.feature_dim)
-        
+        features = flat_features.view(
+            backbone_feat.shape[0], self.num_abnormalities, self.feature_dim
+        )
         return features

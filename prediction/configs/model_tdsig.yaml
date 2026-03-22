@@ -1,0 +1,34 @@
+# TDSig: lab Transformer (pooled) + ref/gen CNN, concat + MLP head
+model_type: "tdsig"
+
+seed: 2025
+
+data_path: "data/data_for_gen_infer_with_tar_img.pkl"
+train_ratio: 0.7
+val_ratio: 0.15
+test_ratio: 0.15
+
+resize: 224
+crop: 224
+
+batch_size: 4
+num_workers: 0
+epochs: 5
+learning_rate: 0.001
+weight_decay: 0.0001
+output_dir: "output/prediction_tdsig"
+
+lab_input_dim: 53
+hidden_dim: 128
+
+lab_d_model: 128
+lab_nhead: 4
+lab_num_layers: 2
+lab_ff_dim: 256
+lab_pooling: "mean"
+lab_positional_max_len: 512
+
+image_feat_dim: 128
+fusion_dim: 128
+num_diseases: 4
+dropout: 0.1

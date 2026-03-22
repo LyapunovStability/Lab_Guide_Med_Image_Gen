@@ -29,7 +29,10 @@ try:
     import xformers.ops as xops
 except ImportError:
     xops = None
-    print("Warning: xformers not available. Some EVA-X features may not work.")
+    print(
+        "Warning: xformers not available. EVA-X attention falls back to PyTorch SDPA path "
+        "(correct, but slower / more VRAM). Install xformers for memory-efficient attention."
+    )
 
 try:
     from apex.normalization import FusedLayerNorm
@@ -52,6 +55,49 @@ def _cfg(url='', **kwargs):
         'mean': (0.5, 0.5, 0.5), 'std': (0.5, 0.5, 0.5),
         **kwargs
     }
+
+
+# timm.create_model forwards many factory-only kwargs; only these match VisionTransformer.__init__.
+_EVA_VIT_INIT_KEYS = frozenset(
+    {
+        "img_size",
+        "patch_size",
+        "in_chans",
+        "num_classes",
+        "embed_dim",
+        "depth",
+        "num_heads",
+        "mlp_ratio",
+        "qkv_bias",
+        "qk_scale",
+        "drop_rate",
+        "attn_drop_rate",
+        "drop_path_rate",
+        "norm_layer",
+        "init_values",
+        "use_abs_pos_emb",
+        "use_rel_pos_bias",
+        "use_shared_rel_pos_bias",
+        "use_decoupled_rel_pos_bias",
+        "use_mean_pooling",
+        "init_scale",
+        "use_checkpoint",
+        "stop_grad_conv1",
+        "postnorm",
+        "subln",
+        "xattn",
+        "swiglu",
+        "naiveswiglu",
+        "rope",
+        "pt_hw_seq_len",
+        "intp_freq",
+    }
+)
+
+
+def _kwargs_for_eva_vit(kwargs: dict) -> dict:
+    """Strip timm factory keys (e.g. pretrained_cfg_overlay) without mutating ``kwargs`` (keeps init_ckpt)."""
+    return {k: v for k, v in kwargs.items() if k in _EVA_VIT_INIT_KEYS}
 
 
 _shape_t = Union[int, List[int], Size]
@@ -231,9 +277,7 @@ class Attention(nn.Module):
             ro_k_t = self.rope(k_t)
             k = torch.cat((k[:, :, :1, :], ro_k_t), -2).type_as(v)
 
-        if self.xattn:
-            if xops is None:
-                raise ImportError("xformers is required for xattn=True. Please install xformers.")
+        if self.xattn and xops is not None:
             q = q.permute(0, 2, 1, 3)   # B, num_heads, N, C -> B, N, num_heads, C
             k = k.permute(0, 2, 1, 3)
             v = v.permute(0, 2, 1, 3)
@@ -243,6 +287,7 @@ class Attention(nn.Module):
             x = self.proj(x)
             x = self.proj_drop(x)
         else:
+            # xattn=True without xformers: same math as xformers path, standard attention (more VRAM)
             q = q * self.scale
             if self.qk_float:
                 attn = (q.float() @ k.float().transpose(-2, -1))
@@ -664,7 +709,7 @@ def eva02_tiny_patch14_xattn_fusedLN_SwiGLU_preln_RoPE(pretrained=False, **kwarg
         rope=True,
         pt_hw_seq_len=16,   # 224/14
         intp_freq=True,
-        **kwargs)
+        **_kwargs_for_eva_vit(kwargs))
     model.default_cfg = _cfg()
     if pretrained:
         checkpoint = torch.load(
@@ -690,7 +735,7 @@ def eva02_small_patch14_xattn_fusedLN_SwiGLU_preln_RoPE(pretrained=False, **kwar
         rope=True,
         pt_hw_seq_len=16,   # 224/14
         intp_freq=True,
-        **kwargs)
+        **_kwargs_for_eva_vit(kwargs))
     model.default_cfg = _cfg()
     if pretrained:
         checkpoint = torch.load(
@@ -718,7 +763,7 @@ def eva02_base_patch14_xattn_fusedLN_NaiveSwiGLU_subln_RoPE(pretrained=False, **
         rope=True, 
         pt_hw_seq_len=16,   # 224/14
         intp_freq=True,
-        **kwargs)
+        **_kwargs_for_eva_vit(kwargs))
     model.default_cfg = _cfg()
     if pretrained:
         checkpoint = torch.load(
@@ -746,7 +791,7 @@ def eva02_large_patch14_xattn_fusedLN_NaiveSwiGLU_subln_RoPE(pretrained=False, *
         rope=True, 
         pt_hw_seq_len=16,   # 224/14
         intp_freq=True,
-        **kwargs)
+        **_kwargs_for_eva_vit(kwargs))
     model.default_cfg = _cfg()
     if pretrained:
         checkpoint = torch.load(
@@ -771,7 +816,7 @@ def eva02_base_patch16_xattn_fusedLN_NaiveSwiGLU_subln_RoPE(pretrained=False, **
         rope=True, 
         pt_hw_seq_len=14,   # 224/16
         intp_freq=True,
-        **kwargs)
+        **_kwargs_for_eva_vit(kwargs))
     model.default_cfg = _cfg()
     if pretrained:
         checkpoint = torch.load(
@@ -795,7 +840,7 @@ def eva02_small_patch16_xattn_fusedLN_SwiGLU_preln_RoPE(pretrained=False, **kwar
         rope=True,
         pt_hw_seq_len=14,   # 224/16
         intp_freq=True,
-        **kwargs)
+        **_kwargs_for_eva_vit(kwargs))
     model.default_cfg = _cfg()
     if pretrained:
         checkpoint = torch.load(
@@ -820,7 +865,7 @@ def eva02_base_patch16_xattn_fusedLN_NaiveSwiGLU_subln_RoPE(pretrained=False, **
         rope=True, 
         pt_hw_seq_len=16,   # 224/14
         intp_freq=True,
-        **kwargs)
+        **_kwargs_for_eva_vit(kwargs))
     model.default_cfg = _cfg()
     if pretrained:
         checkpoint = torch.load(
@@ -845,7 +890,7 @@ def eva02_tiny_patch16_xattn_fusedLN_SwiGLU_preln_RoPE(pretrained=False, **kwarg
         rope=True,
         pt_hw_seq_len=14,   # 224/16
         intp_freq=True,
-        **kwargs)
+        **_kwargs_for_eva_vit(kwargs))
     model.default_cfg = _cfg()
     if pretrained:
         checkpoint = torch.load(

@@ -22,25 +22,25 @@ Heart rate
 Hematocrit
 Hemoglobin
 INR
-Lactate dehydrogenase
 Lactate
+Lactate dehydrogenase
 Lymphocytes
 Lymphocytes (Absolute)
+Magnesium
 Mean Corpuscular Hemoglobin
 Mean Corpuscular Hemoglobin Concentration
 Mean Corpuscular Volume
-Magnesium
 Mean blood pressure
 Monocytes
 Neutrophils
 O2 Saturation
-Prothrombin Time Test
 Partial pressure of carbon dioxide
 Partial pressure of oxygen
 Partial thromboplastin time
 Phosphate
-Potassium
 Platelet Count
+Potassium
+Prothrombin Time Test
 Red Cell Distribution Width
 Red blood cell count
 Respiratory rate

@@ -6,6 +6,20 @@ from torch.utils.data import Dataset
 import torchvision.transforms as transforms
 import pickle
 
+
+def _resolve_image_path(image_root, path):
+    """If path is relative and image_root is set, join; absolute paths are left unchanged."""
+    if not path:
+        return path
+    path = os.path.normpath(str(path).strip())
+    if os.path.isabs(path):
+        return path
+    root = (image_root or "").strip()
+    if root:
+        return os.path.normpath(os.path.join(root, path))
+    return path
+
+
 # Findings list for reference/compatibility
 FINGDINGS = ['Atelectasis', 'Cardiomegaly', 'Consolidation', 'Edema', 
              'Enlarged Cardiomediastinum', 'Fracture', 'Lung Lesion', 
@@ -17,10 +31,11 @@ class GeneratorTrainDataset(Dataset):
     Dataset for Generator Training (i.e., Stage 1 & Stage 2 Training; Pair-wise Strategy) and Validation.
     Input: Data dicts containing (Ref Image, Target Image, Interval Lab Data).
     """
-    def __init__(self, data_pkl_path, resize=512, crop=512):
+    def __init__(self, data_pkl_path, resize=512, crop=512, image_root_path=None):
         self.data_pkl_path = data_pkl_path
         self.resize = resize
         self.crop = crop
+        self.image_root_path = image_root_path
         
         with open(self.data_pkl_path, 'rb') as f:
             self.data = pickle.load(f) # Dictionary: {patient_id: patient_data_dict}
@@ -49,14 +64,14 @@ class GeneratorTrainDataset(Dataset):
         lab_mask = torch.FloatTensor(sample['lab_test_mask'])
         
         # 2. Reference Image
-        ref_img_path = sample['reference_image_path']
+        ref_img_path = _resolve_image_path(self.image_root_path, sample['reference_image_path'])
         ref_img = Image.open(ref_img_path).convert('RGB')
         ref_img = self.transform(ref_img)
         ref_time = sample['reference_image_time']
         ref_abnormality = torch.FloatTensor(sample['reference_image_abnormality'])
         
         # 3. Target Image
-        target_img_path = sample['target_image_path']
+        target_img_path = _resolve_image_path(self.image_root_path, sample['target_image_path'])
         target_img = Image.open(target_img_path).convert('RGB')
         target_img = self.transform(target_img)
         target_time = sample['target_image_time']
@@ -80,10 +95,11 @@ class InferenceDataset(Dataset):
     Dataset for Generator Inference (i.e., Generator Inference for downstream prediction model).
     Input: Raw Test Data or Test Data with Target Points.
     """
-    def __init__(self, data_pkl_path, resize=512, crop=512):
+    def __init__(self, data_pkl_path, resize=512, crop=512, image_root_path=None):
         self.data_pkl_path = data_pkl_path
         self.resize = resize
         self.crop = crop
+        self.image_root_path = image_root_path
         
         with open(self.data_pkl_path, 'rb') as f:
             self.data = pickle.load(f)
@@ -111,7 +127,7 @@ class InferenceDataset(Dataset):
         lab_mask = torch.FloatTensor(sample['lab_test_mask'])
         
         # 2. Reference Image
-        ref_img_path = sample['reference_image_path']
+        ref_img_path = _resolve_image_path(self.image_root_path, sample['reference_image_path'])
         ref_img = Image.open(ref_img_path).convert('RGB')
         ref_img = self.transform(ref_img)
         ref_time = sample['reference_image_time']

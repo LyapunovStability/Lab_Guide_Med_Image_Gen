@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from transformers import AutoModel, AutoTokenizer
 from typing import Dict, List, Tuple, Optional
 from models.OrganGraph import OrganGraph
+from utils.project_paths import resolve_pubmedbert_source
 
 class KnowledgeGuidedTransform(nn.Module):
     """
@@ -21,7 +22,7 @@ class KnowledgeGuidedTransform(nn.Module):
         organ_feat_dim: int,
         concept_emb_dim: int = 768,
         use_clip: bool = True,
-        text_encoder_model_name: str = "neuml/pubmedbert-base-embeddings",
+        text_encoder_model_name: Optional[str] = None,
         text_max_length: int = 512,
         device: str = 'cuda'
     ):
@@ -35,7 +36,7 @@ class KnowledgeGuidedTransform(nn.Module):
             organ_feat_dim: Dimension of organ state features
             concept_emb_dim: Dimension of concept embeddings (default: 768)
             use_clip: Backward-compatible flag for enabling pretrained text encoder
-            text_encoder_model_name: Hugging Face model name for concept text encoding
+            text_encoder_model_name: 本地目录（相对项目根或绝对路径）或 Hub 模型 ID；None 则默认 checkpoints/pubmedbert-base-embeddings
             text_max_length: Maximum token length for concept text encoding
             device: Device to run on
         """
@@ -50,13 +51,14 @@ class KnowledgeGuidedTransform(nn.Module):
             self.device = "cpu"
         else:
             self.device = device
-        self.text_encoder_model_name = text_encoder_model_name
         self.text_max_length = text_max_length
         
         # Initialize pretrained text encoder for concept embeddings
         if use_clip:
-            self.text_encoder = AutoModel.from_pretrained(self.text_encoder_model_name)
-            self.tokenizer = AutoTokenizer.from_pretrained(self.text_encoder_model_name)
+            resolved_te = resolve_pubmedbert_source(text_encoder_model_name)
+            self.text_encoder_model_name = resolved_te
+            self.text_encoder = AutoModel.from_pretrained(resolved_te)
+            self.tokenizer = AutoTokenizer.from_pretrained(resolved_te)
 
             encoder_hidden_size = getattr(self.text_encoder.config, "hidden_size", None)
             if encoder_hidden_size is None:
@@ -75,6 +77,7 @@ class KnowledgeGuidedTransform(nn.Module):
                 param.requires_grad = False
             self.text_encoder.eval()
         else:
+            self.text_encoder_model_name = text_encoder_model_name
             self.text_encoder = None
             self.tokenizer = None
         
