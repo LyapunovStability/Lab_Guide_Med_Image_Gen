@@ -65,7 +65,7 @@ Scripts that turn official MIMIC exports into the project’s pickle format are 
 
 You can skip raw preprocessing and download **preprocessed image + lab** assets from the following link:
 
-- Link: [https://pan.baidu.com/s/11ufoXkwrmFHfuvxWxaKCVA](https://pan.baidu.com/s/11ufoXkwrmFHfuvxWxaKCVA)
+- Link: [https://pan.baidu.com/s/1usoGAHKI-P_qM0zpqpi3Zg?pwd=74dn](https://pan.baidu.com/s/1usoGAHKI-P_qM0zpqpi3Zg?pwd=74dn)
 
 After downloading, **extract the archive into the project’s `data/` directory** (so paths line up with configs and examples).
 
