@@ -1,5 +1,6 @@
 import argparse
 import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import yaml
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader
@@ -17,27 +18,34 @@ from models.ref_image_adapter import RefImageAdapter
 from models.TrajectoryEncoder import TrajectoryEncoder
 from models.TimePointSelector import TimePointSelector
 from torchvision.utils import save_image
+from utils.project_paths import resolve_pubmedbert_source, resolve_sd_model_source
 
 class ControlGenDataModule(pl.LightningDataModule):
     def __init__(self, config):
         super().__init__()
         self.config = config
 
+    def _image_root_path(self):
+        return self.config.get('image_root_path') or self.config.get('image_root_dir')
+
     def setup(self, stage=None):
         # [REFRACTOR] Use GeneratorTrainDataset for Stage 1 & 2 Training (Pair-wise)
         # Note: InferenceDataset integration is deferred.
+        root = self._image_root_path()
         
         # Generator Training - Train Set
         self.train_dataset = GeneratorTrainDataset(
             data_pkl_path=self.config['train_lab_test_pkl_path'],
             resize=self.config.get('resize', 512),
-            crop=self.config.get('crop', 512)
+            crop=self.config.get('crop', 512),
+            image_root_path=root,
         )
         # Generator Training - Validation Set
         self.val_dataset = GeneratorTrainDataset(
             data_pkl_path=self.config['val_lab_test_pkl_path'],
             resize=self.config.get('resize', 512),
-            crop=self.config.get('crop', 512)
+            crop=self.config.get('crop', 512),
+            image_root_path=root,
         )
         
         # Generator Training - Test Set (For Generator Evaluation like FID, L1)
@@ -45,7 +53,8 @@ class ControlGenDataModule(pl.LightningDataModule):
         self.test_dataset = GeneratorTrainDataset(
             data_pkl_path=self.config['test_lab_test_pkl_path'],
             resize=self.config.get('resize', 512),
-            crop=self.config.get('crop', 512)
+            crop=self.config.get('crop', 512),
+            image_root_path=root,
         )
 
         # [TODO] Generator Inference (Inference Pipeline)
@@ -91,6 +100,9 @@ class ControlGenModel(pl.LightningModule):
     def __init__(self, config):
         super().__init__()
         self.config = config
+        for lr_key in ("learning_rate", "adapter_learning_rate", "unet_learning_rate"):
+            if lr_key in self.config and self.config[lr_key] is not None:
+                self.config[lr_key] = float(self.config[lr_key])
         self.stage = config['stage']
         
         # Feature dimensions
@@ -110,9 +122,12 @@ class ControlGenModel(pl.LightningModule):
         # Knowledge-guided text encoder configuration
         self.knowledge_concept_emb_dim = config.get('knowledge_concept_emb_dim', 768)
         self.knowledge_use_text_encoder = config.get('knowledge_use_text_encoder', True)
-        self.knowledge_text_encoder_model_name = config.get(
-            'knowledge_text_encoder_model_name', 'neuml/pubmedbert-base-embeddings'
-        )
+        if self.knowledge_use_text_encoder:
+            self.knowledge_text_encoder_model_name = resolve_pubmedbert_source(
+                config.get('knowledge_text_encoder_model_name')
+            )
+        else:
+            self.knowledge_text_encoder_model_name = config.get('knowledge_text_encoder_model_name')
         self.knowledge_text_max_length = config.get('knowledge_text_max_length', 512)
         self.reuse_knowledge_concept_buffers_from_ckpt = config.get(
             'reuse_knowledge_concept_buffers_from_ckpt', False
@@ -122,12 +137,16 @@ class ControlGenModel(pl.LightningModule):
             # Stage 1: Trajectory Module Pre-training
             self.cxr_encoder = CXR_Encoder(
                 task='na',
-                vision_backbone=config.get('vision_backbone', 'convnext_base'),
-                pretrained=config.get('pretrained', True),
+                pretrained=config.get(
+                    'cxr_encoder_pretrained',
+                    config.get('pretrained', True),
+                ),
                 num_abnormalities=self.num_abnormalities,
                 feature_dim=self.abn_feat_dim,
-                eva_x_weights_path=config.get('eva_x_weights_path', None),
-                eva_x_model_path=config.get('eva_x_model_path', None)
+                weights_path=config.get(
+                    'cxr_encoder_weights_path',
+                    config.get('eva_x_weights_path', None),
+                ),
             )
             
             self.lab_test_encoder = Lab_Test_Encoder(
@@ -167,26 +186,31 @@ class ControlGenModel(pl.LightningModule):
                 num_ode_layers=config.get('time_selector_num_layers', 3)
             )
             
-            # Freeze CXR Encoder
-            for param in self.cxr_encoder.parameters():
+            # Freeze pretrained ViT only; train abnormality_projection in Stage 1 (see configure_optimizers).
+            for param in self.cxr_encoder.vision_backbone.parameters():
                 param.requires_grad = False
         
         elif self.stage == 2:
             # Stage 2: Diffusion Model Training with Trajectory Fine-tuning
-            self.vae = AutoencoderKL.from_pretrained(config['model_id'], subfolder="vae")
-            self.unet = UNet2DConditionModel.from_pretrained(config['model_id'], subfolder="unet")
+            sd_root = resolve_sd_model_source(config.get('model_id'))
+            self.vae = AutoencoderKL.from_pretrained(sd_root, subfolder="vae")
+            self.unet = UNet2DConditionModel.from_pretrained(sd_root, subfolder="unet")
 
             # Initialize CXR Encoder (Frozen)
             self.cxr_encoder = CXR_Encoder(
                 task='na',
-                vision_backbone=config.get('vision_backbone', 'convnext_base'),
-                pretrained=config.get('pretrained', True),
+                pretrained=config.get(
+                    'cxr_encoder_pretrained',
+                    config.get('pretrained', True),
+                ),
                 num_abnormalities=self.num_abnormalities,
                 feature_dim=self.abn_feat_dim,
-                eva_x_weights_path=config.get('eva_x_weights_path', None),
-                eva_x_model_path=config.get('eva_x_model_path', None)
+                weights_path=config.get(
+                    'cxr_encoder_weights_path',
+                    config.get('eva_x_weights_path', None),
+                ),
             )
-            # Freeze CXR Encoder
+            # CXR: load projection (and backbone if present) from Stage 1 when available, then freeze all.
             for param in self.cxr_encoder.parameters():
                 param.requires_grad = False
             
@@ -257,6 +281,13 @@ class ControlGenModel(pl.LightningModule):
                                      for k, v in state_dict.items() 
                                      if k.startswith('trajectory_encoder.')}
                     self.trajectory_encoder.load_state_dict(traj_state_dict, strict=False)
+                    cxr_state_dict = {
+                        k.replace('cxr_encoder.', ''): v
+                        for k, v in state_dict.items()
+                        if k.startswith('cxr_encoder.')
+                    }
+                    if cxr_state_dict:
+                        self.cxr_encoder.load_state_dict(cxr_state_dict, strict=False)
 
             # Projection layer to convert abnormality features to UNet conditioning dimension
             self.abn_to_unet_proj = nn.Linear(
@@ -266,9 +297,9 @@ class ControlGenModel(pl.LightningModule):
 
             self.train_adapter_only = config.get('train_adapter_only', False)
             self.freeze_unet_backbone = config.get('freeze_unet_backbone', False) or self.train_adapter_only
-            self.base_learning_rate = float(config.get('learning_rate', 5e-5))
-            self.adapter_learning_rate = float(config.get('adapter_learning_rate', self.base_learning_rate))
-            self.unet_learning_rate = float(config.get('unet_learning_rate', self.base_learning_rate))
+            self.base_learning_rate = config.get('learning_rate', 5e-5)
+            self.adapter_learning_rate = config.get('adapter_learning_rate', self.base_learning_rate)
+            self.unet_learning_rate = config.get('unet_learning_rate', self.base_learning_rate)
             self.ref_adapter = None
 
             if config.get('use_ref_adapter', True):
@@ -290,23 +321,12 @@ class ControlGenModel(pl.LightningModule):
             if self.freeze_unet_backbone:
                 for param in self.unet.parameters():
                     param.requires_grad = False
-
-            if self.train_adapter_only:
-                # Stage-2 smoke mode: keep only ref adapter trainable to avoid OOM.
-                for module in (
-                    self.lab_test_encoder,
-                    self.knowledge_transform,
-                    self.trajectory_encoder,
-                    self.abn_to_unet_proj,
-                ):
-                    for param in module.parameters():
-                        param.requires_grad = False
             
             self.vae.eval()
             for param in self.vae.parameters():
                 param.requires_grad = False
             
-            self.scheduler = DDPMScheduler.from_pretrained(config['model_id'], subfolder="scheduler")
+            self.scheduler = DDPMScheduler.from_pretrained(sd_root, subfolder="scheduler")
 
     def _build_sequence_mask(self, lab_lengths, seq_length, device):
         time_indices = torch.arange(seq_length, device=device).unsqueeze(0)
@@ -438,7 +458,13 @@ class ControlGenModel(pl.LightningModule):
         
         # Compute MSE loss
         loss = F.mse_loss(inferred_abn_features, abn_features_gt)
-        self.log("train_loss_s1", loss)
+        self.log(
+            "train_loss_s1",
+            loss,
+            prog_bar=True,
+            on_step=True,
+            on_epoch=True,
+        )
         return loss
 
     def stage1_validation_step(self, batch, batch_idx, prefix="val"):
@@ -508,7 +534,13 @@ class ControlGenModel(pl.LightningModule):
         )
         
         loss = F.mse_loss(inferred_abn_features, abn_features_gt)
-        self.log(f"{prefix}_loss_s1", loss)
+        self.log(
+            f"{prefix}_loss_s1",
+            loss,
+            prog_bar=True,
+            on_step=True,
+            on_epoch=True,
+        )
 
     def stage2_training_step(self, batch, batch_idx):
         # Unpack batch
@@ -596,7 +628,13 @@ class ControlGenModel(pl.LightningModule):
         noise_pred = self.unet(noisy_latents, timesteps, **unet_kwargs).sample
         
         loss = F.mse_loss(noise_pred, noise)
-        self.log("train_loss_s2", loss)
+        self.log(
+            "train_loss_s2",
+            loss,
+            prog_bar=True,
+            on_step=True,
+            on_epoch=True,
+        )
         return loss
 
     def stage2_validation_step(self, batch, batch_idx, prefix="val"):
@@ -677,7 +715,13 @@ class ControlGenModel(pl.LightningModule):
         noise_pred = self.unet(noisy_latents, timesteps, **unet_kwargs).sample
         
         loss = F.mse_loss(noise_pred, noise)
-        self.log(f"{prefix}_loss_s2", loss)
+        self.log(
+            f"{prefix}_loss_s2",
+            loss,
+            prog_bar=True,
+            on_step=True,
+            on_epoch=True,
+        )
 
         if batch_idx == 0 and prefix == "val":
             # Generate and save a sample image (only during validation to save time/space)
@@ -699,7 +743,7 @@ class ControlGenModel(pl.LightningModule):
                 list(self.trajectory_encoder.parameters())
             )
             params_to_train = [param for param in params_to_train if param.requires_grad]
-            optimizer = torch.optim.AdamW(params_to_train, lr=float(self.config['learning_rate']))
+            optimizer = torch.optim.AdamW(params_to_train, lr=self.config['learning_rate'])
             return optimizer
         elif self.stage == 2:
             optimizer_groups = []
@@ -750,15 +794,21 @@ def main(config):
         dirpath=config['output_dir'],
         filename='best_model',
         save_top_k=1,
-        monitor=f"val_loss_s{config['stage']}",
+        monitor=f"val_loss_s{config['stage']}_epoch",
         mode='min',
+    )
+
+    # Keep finished epoch bars in terminal so metric history is visible.
+    progress_bar_callback = pl.callbacks.TQDMProgressBar(
+        refresh_rate=config.get('progress_bar_refresh_rate', 1),
+        leave=config.get('progress_bar_leave', True),
     )
     
     trainer = pl.Trainer(
         accelerator='gpu' if torch.cuda.is_available() else 'cpu',
         devices=1,
         max_epochs=config['epochs'],
-        callbacks=[checkpoint_callback],
+        callbacks=[checkpoint_callback, progress_bar_callback],
         logger=pl.loggers.TensorBoardLogger(save_dir=config['log_dir']),
     )
     

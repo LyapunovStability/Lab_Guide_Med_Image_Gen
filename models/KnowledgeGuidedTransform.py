@@ -94,7 +94,172 @@ class KnowledgeGuidedTransform(nn.Module):
         
         # Projection for organ->abnormality transformation
         self.W_org_to_abn = nn.Linear(organ_feat_dim, abn_feat_dim)
-        
+
+        # Static graph edges for vectorized lab/org/abn transforms (no Python loops over batch/time)
+        self._register_graph_edge_buffers()
+
+    def _relation_embedding_vector(self, relation: str) -> torch.Tensor:
+        """Single relation row; zeros if unknown (matches legacy _get_relation_embedding)."""
+        z = torch.zeros(self.concept_emb_dim, dtype=torch.float32)
+        if hasattr(self, "relation_to_idx") and relation in self.relation_to_idx:
+            idx = self.relation_to_idx[relation]
+            z = self.relation_emb[idx].detach().float().cpu()
+        return z
+
+    def _register_graph_edge_buffers(self) -> None:
+        """Precompute organ↔lab and organ↔abnormality edges for batched forward."""
+        lab_rows = self.organ_graph.get_all_lab_tests()
+        lab_name_to_feat_idx = {n: i for i, n in enumerate(lab_rows)}
+        abn_rows = self.organ_graph.get_all_abnormalities()
+
+        lab_idx_list: List[int] = []
+        org_idx_list: List[int] = []
+        rel_vecs: List[torch.Tensor] = []
+
+        for org_idx, org_name in enumerate(self.organ_graph.get_all_organs()):
+            for lab_name in self.organ_graph.get_labs_for_organ(org_name):
+                li = lab_name_to_feat_idx.get(lab_name, -1)
+                if li < 0:
+                    continue
+                triplets = self.organ_graph.get_lab_triplets(lab_name)
+                if triplets:
+                    _, relation, _ = triplets[0]
+                    rvec = self._relation_embedding_vector(relation)
+                else:
+                    rvec = torch.zeros(self.concept_emb_dim, dtype=torch.float32)
+                lab_idx_list.append(li)
+                org_idx_list.append(org_idx)
+                rel_vecs.append(rvec)
+
+        if lab_idx_list:
+            self.register_buffer(
+                "lab_org_lab_idx",
+                torch.tensor(lab_idx_list, dtype=torch.long),
+                persistent=False,
+            )
+            self.register_buffer(
+                "lab_org_org_idx",
+                torch.tensor(org_idx_list, dtype=torch.long),
+                persistent=False,
+            )
+            self.register_buffer(
+                "lab_org_rel_emb",
+                torch.stack(rel_vecs, dim=0),
+                persistent=False,
+            )
+        else:
+            self.register_buffer("lab_org_lab_idx", torch.zeros(0, dtype=torch.long), persistent=False)
+            self.register_buffer("lab_org_org_idx", torch.zeros(0, dtype=torch.long), persistent=False)
+            self.register_buffer(
+                "lab_org_rel_emb",
+                torch.zeros(0, self.concept_emb_dim, dtype=torch.float32),
+                persistent=False,
+            )
+
+        abn_idx_list: List[int] = []
+        abn_org_idx_list: List[int] = []
+        abn_rel_vecs: List[torch.Tensor] = []
+
+        for org_idx, org_name in enumerate(self.organ_graph.get_all_organs()):
+            for abn_name in self.organ_graph.get_abnormalities_for_organ(org_name):
+                ai = self.organ_graph.get_abnormality_index(abn_name)
+                if ai < 0:
+                    continue
+                triplets = self.organ_graph.get_abnormality_triplets(abn_name)
+                if triplets:
+                    _, relation, _ = triplets[0]
+                    rvec = self._relation_embedding_vector(relation)
+                else:
+                    rvec = torch.zeros(self.concept_emb_dim, dtype=torch.float32)
+                abn_idx_list.append(ai)
+                abn_org_idx_list.append(org_idx)
+                abn_rel_vecs.append(rvec)
+
+        if abn_idx_list:
+            self.register_buffer(
+                "abn_org_abn_idx",
+                torch.tensor(abn_idx_list, dtype=torch.long),
+                persistent=False,
+            )
+            self.register_buffer(
+                "abn_org_org_idx",
+                torch.tensor(abn_org_idx_list, dtype=torch.long),
+                persistent=False,
+            )
+            self.register_buffer(
+                "abn_org_rel_emb",
+                torch.stack(abn_rel_vecs, dim=0),
+                persistent=False,
+            )
+        else:
+            self.register_buffer("abn_org_abn_idx", torch.zeros(0, dtype=torch.long), persistent=False)
+            self.register_buffer("abn_org_org_idx", torch.zeros(0, dtype=torch.long), persistent=False)
+            self.register_buffer(
+                "abn_org_rel_emb",
+                torch.zeros(0, self.concept_emb_dim, dtype=torch.float32),
+                persistent=False,
+            )
+
+        o2a_abn_idx: List[int] = []
+        o2a_org_idx: List[int] = []
+        for abn_i, abn_name in enumerate(abn_rows):
+            for org_name in self.organ_graph.get_organs_for_abnormality(abn_name):
+                oi = self.organ_graph.get_organ_index(org_name)
+                if oi >= 0:
+                    o2a_abn_idx.append(abn_i)
+                    o2a_org_idx.append(oi)
+
+        if o2a_abn_idx:
+            self.register_buffer(
+                "o2a_abn_idx",
+                torch.tensor(o2a_abn_idx, dtype=torch.long),
+                persistent=False,
+            )
+            self.register_buffer(
+                "o2a_org_idx",
+                torch.tensor(o2a_org_idx, dtype=torch.long),
+                persistent=False,
+            )
+        else:
+            self.register_buffer("o2a_abn_idx", torch.zeros(0, dtype=torch.long), persistent=False)
+            self.register_buffer("o2a_org_idx", torch.zeros(0, dtype=torch.long), persistent=False)
+
+    def _scatter_mean_to_organs(
+        self,
+        attended: torch.Tensor,
+        org_indices: torch.Tensor,
+        num_organs: int,
+        time_mask: Optional[torch.Tensor],
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        attended: (B, T, E, F), org_indices: (E,) long on same device.
+        time_mask: (B, T) bool, True = valid step; counts only apply when valid (legacy loop behavior).
+        Returns per-organ mean pre-activations (B, T, O, F) and organ_mask (B, T, O).
+        """
+        if attended.shape[2] == 0:
+            b, t, _, f = attended.shape
+            z = attended.new_zeros(b, t, num_organs, f)
+            m = torch.zeros(b, t, num_organs, dtype=torch.bool, device=attended.device)
+            return z, m
+
+        b, t, e, f = attended.shape
+        flat = b * t
+        att = attended.reshape(flat, e, f)
+        sum_o = attended.new_zeros(flat, num_organs, f)
+        cnt = attended.new_zeros(flat, num_organs, 1)
+        oi = org_indices.to(device=attended.device, dtype=torch.long)
+        if time_mask is not None:
+            w = time_mask.reshape(flat).to(dtype=att.dtype).unsqueeze(-1)
+        else:
+            w = torch.ones(flat, 1, device=attended.device, dtype=att.dtype)
+        for ei in range(e):
+            o = int(oi[ei])
+            sum_o[:, o] = sum_o[:, o] + att[:, ei]
+            cnt[:, o] = cnt[:, o] + w
+        mean_o = sum_o / cnt.clamp(min=1e-9)
+        mask = (cnt.squeeze(-1) > 0).reshape(b, t, num_organs)
+        return mean_o.reshape(b, t, num_organs, f), mask
+
     def _precompute_concept_embeddings(self):
         """Pre-compute concept embeddings for all lab tests, organs, and abnormalities."""
         if self.text_encoder is None:
@@ -231,73 +396,50 @@ class KnowledgeGuidedTransform(nn.Module):
         """
         batch_size, num_time_steps, num_labs, feat_dim = lab_features.shape
         num_organs = self.organ_graph.get_num_organs()
-        
-        # Initialize organ states and mask
-        organ_states = torch.zeros(
-            batch_size, num_time_steps, num_organs, self.organ_feat_dim,
-            device=lab_features.device, dtype=lab_features.dtype
+        e = int(self.lab_org_lab_idx.shape[0])
+        if e == 0:
+            z = lab_features.new_zeros(
+                batch_size, num_time_steps, num_organs, self.organ_feat_dim
+            )
+            m = torch.zeros(
+                batch_size, num_time_steps, num_organs,
+                dtype=torch.bool, device=lab_features.device,
+            )
+            return z, m
+
+        graph_labs = self.organ_graph.get_all_lab_tests()
+        if len(lab_names) != len(graph_labs) or any(a != b for a, b in zip(lab_names, graph_labs)):
+            raise ValueError(
+                "lab_to_organs (vectorized): lab_names must match organ_graph.get_all_lab_tests() order."
+            )
+
+        li = self.lab_org_lab_idx.to(lab_features.device)
+        lab_e = lab_features[:, :, li, :]
+        lc = self.lab_concept_emb[li].to(device=lab_features.device, dtype=lab_features.dtype)
+        lc = lc.unsqueeze(0).unsqueeze(0).expand(batch_size, num_time_steps, -1, -1)
+        fused = torch.cat([lab_e, lc], dim=-1)
+        fused_flat = fused.reshape(-1, fused.shape[-1])
+        h_lab = F.relu(self.W_lab(fused_flat)).view(batch_size, num_time_steps, e, self.lab_feat_dim)
+
+        rel_e = self.lab_org_rel_emb.to(device=lab_features.device, dtype=lab_features.dtype)
+        dr = self.D(rel_e)
+        alpha = torch.sigmoid((h_lab * dr.unsqueeze(0).unsqueeze(0)).sum(dim=-1, keepdim=True))
+        attended = h_lab * alpha
+
+        if time_mask is not None:
+            attended = attended * time_mask.unsqueeze(-1).unsqueeze(-1).to(dtype=attended.dtype)
+
+        h_agg, organ_mask = self._scatter_mean_to_organs(
+            attended, self.lab_org_org_idx, num_organs, time_mask
         )
-        organ_mask = torch.zeros(
-            batch_size, num_time_steps, num_organs,
-            device=lab_features.device, dtype=torch.bool
+        h_org = F.relu(self.W_org(h_agg.reshape(-1, self.lab_feat_dim))).view(
+            batch_size, num_time_steps, num_organs, self.organ_feat_dim
         )
-        
-        # Process each time step
-        for t in range(num_time_steps):
-            for b in range(batch_size):
-                # Check if this time step is valid
-                if time_mask is not None and not time_mask[b, t]:
-                    continue
-                
-                # Process each organ
-                for org_idx, org_name in enumerate(self.organ_graph.get_all_organs()):
-                    # Get connected lab tests
-                    connected_labs = self.organ_graph.get_labs_for_organ(org_name)
-                    
-                    if not connected_labs:
-                        continue
-                    
-                    # Collect features and compute attention weights
-                    attended_features = []
-                    
-                    for lab_name in connected_labs:
-                        # Find lab index
-                        lab_idx = lab_names.index(lab_name) if lab_name in lab_names else -1
-                        if lab_idx < 0 or lab_idx >= num_labs:
-                            continue
-                        
-                        # Get lab feature
-                        lab_feat = lab_features[b, t, lab_idx]  # (lab_feat_dim,)
-                        
-                        # Get concept embeddings
-                        lab_concept = self._get_concept_embedding(lab_name, 'lab', lab_features.device)
-                        org_concept = self._get_concept_embedding(org_name, 'org', lab_features.device)
-                        
-                        # Get relation embedding (use first relation found)
-                        triplets = self.organ_graph.get_lab_triplets(lab_name)
-                        if triplets:
-                            _, relation, _ = triplets[0]
-                            rel_emb = self._get_relation_embedding(relation, lab_features.device)
-                        else:
-                            rel_emb = torch.zeros(self.concept_emb_dim, device=lab_features.device)
-                        
-                        # Fuse value feature and concept embedding
-                        fused_feat = torch.cat([lab_feat, lab_concept], dim=0)
-                        h_lab = F.relu(self.W_lab(fused_feat))
-                        
-                        # Compute attention weight
-                        alpha = torch.sigmoid(h_lab @ self.D(rel_emb))
-                        
-                        attended_features.append(alpha * h_lab)
-                    
-                    if attended_features:
-                        # Aggregate attended features
-                        h_agg = torch.stack(attended_features).mean(dim=0)
-                        h_org = F.relu(self.W_org(h_agg))
-                        
-                        organ_states[b, t, org_idx] = h_org
-                        organ_mask[b, t, org_idx] = True
-        
+        organ_states = torch.where(
+            organ_mask.unsqueeze(-1),
+            h_org,
+            torch.zeros_like(h_org),
+        )
         return organ_states, organ_mask
     
     def abn_to_organs(
@@ -320,67 +462,50 @@ class KnowledgeGuidedTransform(nn.Module):
         """
         batch_size, num_time_steps, num_abns, feat_dim = abn_features.shape
         num_organs = self.organ_graph.get_num_organs()
-        
-        # Initialize organ states and mask
-        organ_states = torch.zeros(
-            batch_size, num_time_steps, num_organs, self.organ_feat_dim,
-            device=abn_features.device, dtype=abn_features.dtype
+        e = int(self.abn_org_abn_idx.shape[0])
+        if e == 0:
+            z = abn_features.new_zeros(
+                batch_size, num_time_steps, num_organs, self.organ_feat_dim
+            )
+            m = torch.zeros(
+                batch_size, num_time_steps, num_organs,
+                dtype=torch.bool, device=abn_features.device,
+            )
+            return z, m
+
+        graph_abns = self.organ_graph.get_all_abnormalities()
+        if len(abn_names) != len(graph_abns) or any(a != b for a, b in zip(abn_names, graph_abns)):
+            raise ValueError(
+                "abn_to_organs (vectorized): abn_names must match organ_graph.get_all_abnormalities() order."
+            )
+
+        ai = self.abn_org_abn_idx.to(abn_features.device)
+        abn_e = abn_features[:, :, ai, :]
+        ac = self.abn_concept_emb[ai].to(device=abn_features.device, dtype=abn_features.dtype)
+        ac = ac.unsqueeze(0).unsqueeze(0).expand(batch_size, num_time_steps, -1, -1)
+        fused = torch.cat([abn_e, ac], dim=-1)
+        fused_flat = fused.reshape(-1, fused.shape[-1])
+        h_abn = F.relu(self.W_abn(fused_flat)).view(batch_size, num_time_steps, e, self.abn_feat_dim)
+
+        rel_e = self.abn_org_rel_emb.to(device=abn_features.device, dtype=abn_features.dtype)
+        dr = self.D(rel_e)
+        alpha = torch.sigmoid((h_abn * dr.unsqueeze(0).unsqueeze(0)).sum(dim=-1, keepdim=True))
+        attended = h_abn * alpha
+
+        if time_mask is not None:
+            attended = attended * time_mask.unsqueeze(-1).unsqueeze(-1).to(dtype=attended.dtype)
+
+        h_agg, organ_mask = self._scatter_mean_to_organs(
+            attended, self.abn_org_org_idx, num_organs, time_mask
         )
-        organ_mask = torch.zeros(
-            batch_size, num_time_steps, num_organs,
-            device=abn_features.device, dtype=torch.bool
+        h_org = F.relu(self.W_org(h_agg.reshape(-1, self.lab_feat_dim))).view(
+            batch_size, num_time_steps, num_organs, self.organ_feat_dim
         )
-        
-        # Process each time step
-        for t in range(num_time_steps):
-            for b in range(batch_size):
-                if time_mask is not None and not time_mask[b, t]:
-                    continue
-                
-                for org_idx, org_name in enumerate(self.organ_graph.get_all_organs()):
-                    connected_abns = self.organ_graph.get_abnormalities_for_organ(org_name)
-                    
-                    if not connected_abns:
-                        continue
-                    
-                    attended_features = []
-                    
-                    for abn_name in connected_abns:
-                        abn_idx = abn_names.index(abn_name) if abn_name in abn_names else -1
-                        if abn_idx < 0 or abn_idx >= num_abns:
-                            continue
-                        
-                        abn_feat = abn_features[b, t, abn_idx]
-                        
-                        # Get concept embeddings
-                        abn_concept = self._get_concept_embedding(abn_name, 'abn', abn_features.device)
-                        org_concept = self._get_concept_embedding(org_name, 'org', abn_features.device)
-                        
-                        # Get relation embedding
-                        triplets = self.organ_graph.get_abnormality_triplets(abn_name)
-                        if triplets:
-                            _, relation, _ = triplets[0]
-                            rel_emb = self._get_relation_embedding(relation, abn_features.device)
-                        else:
-                            rel_emb = torch.zeros(self.concept_emb_dim, device=abn_features.device)
-                        
-                        # Fuse value feature and concept embedding
-                        fused_feat = torch.cat([abn_feat, abn_concept], dim=0)
-                        h_abn = F.relu(self.W_abn(fused_feat))
-                        
-                        # Compute attention weight
-                        alpha = torch.sigmoid(h_abn @ self.D(rel_emb))
-                        
-                        attended_features.append(alpha * h_abn)
-                    
-                    if attended_features:
-                        # Aggregate and project to organ dimension
-                        h_agg = torch.stack(attended_features).mean(dim=0)
-                        h_org = F.relu(self.W_org(h_agg))
-                        
-                        organ_states[b, t, org_idx] = h_org
-                        organ_mask[b, t, org_idx] = True
-        
+        organ_states = torch.where(
+            organ_mask.unsqueeze(-1),
+            h_org,
+            torch.zeros_like(h_org),
+        )
         return organ_states, organ_mask
     
     def organs_to_abnormalities(
@@ -409,35 +534,44 @@ class KnowledgeGuidedTransform(nn.Module):
 
         batch_size, num_time_steps, num_organs, _ = organ_states.shape
         num_abns = len(abn_names)
-        
-        # Initialize abnormality features
-        abn_features = torch.zeros(
-            batch_size, num_time_steps, num_abns, self.abn_feat_dim,
-            device=organ_states.device, dtype=organ_states.dtype
-        )
-        
-        # Process each time step
-        for t in range(num_time_steps):
-            for b in range(batch_size):
-                for abn_idx, abn_name in enumerate(abn_names):
-                    # Get connected organs
-                    connected_orgs = self.organ_graph.get_organs_for_abnormality(abn_name)
-                    
-                    if not connected_orgs:
-                        continue
-                    
-                    # Aggregate organ states
-                    org_features = []
-                    for org_name in connected_orgs:
-                        org_idx = self.organ_graph.get_organ_index(org_name)
-                        if org_idx >= 0 and organ_mask[b, t, org_idx]:
-                            org_features.append(organ_states[b, t, org_idx])
-                    
-                    if org_features:
-                        # Aggregate and project to abnormality dimension
-                        h_agg = torch.stack(org_features).mean(dim=0)
-                        h_abn = F.relu(self.W_org_to_abn(h_agg))
-                        abn_features[b, t, abn_idx] = h_abn
+        graph_abns = self.organ_graph.get_all_abnormalities()
+        if len(abn_names) != len(graph_abns) or any(a != b for a, b in zip(abn_names, graph_abns)):
+            raise ValueError(
+                "organs_to_abnormalities (vectorized): abn_names must match organ_graph.get_all_abnormalities() order."
+            )
+
+        e = int(self.o2a_org_idx.shape[0])
+        if e == 0:
+            abn_features = organ_states.new_zeros(
+                batch_size, num_time_steps, num_abns, self.abn_feat_dim
+            )
+        else:
+            oi = self.o2a_org_idx.to(organ_states.device)
+            ai = self.o2a_abn_idx.to(organ_states.device)
+            org_e = organ_states[:, :, oi, :]
+            m_e = organ_mask[:, :, oi].to(dtype=org_e.dtype)
+            org_e = org_e * m_e.unsqueeze(-1)
+            w_edge = m_e
+
+            flat = batch_size * num_time_steps
+            att = org_e.reshape(flat, e, self.organ_feat_dim)
+            w_flat = w_edge.reshape(flat, e)
+            sum_a = organ_states.new_zeros(flat, num_abns, self.organ_feat_dim)
+            cnt_a = organ_states.new_zeros(flat, num_abns, 1)
+            for ei in range(e):
+                a = int(ai[ei])
+                sum_a[:, a] = sum_a[:, a] + att[:, ei]
+                cnt_a[:, a] = cnt_a[:, a] + w_flat[:, ei].unsqueeze(-1)
+            h_agg = sum_a / cnt_a.clamp(min=1e-9)
+            h_abn = F.relu(self.W_org_to_abn(h_agg.reshape(-1, self.organ_feat_dim))).view(
+                batch_size, num_time_steps, num_abns, self.abn_feat_dim
+            )
+            has_any = (cnt_a.squeeze(-1) > 0).reshape(batch_size, num_time_steps, num_abns)
+            abn_features = torch.where(
+                has_any.unsqueeze(-1),
+                h_abn,
+                torch.zeros_like(h_abn),
+            )
 
         if squeezed_time_dim:
             return abn_features.squeeze(1)
