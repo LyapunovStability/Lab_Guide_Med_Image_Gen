@@ -13,6 +13,11 @@ try:
     import yaml
 except ModuleNotFoundError:
     yaml = None
+try:
+    from tqdm import tqdm
+except ModuleNotFoundError:
+    tqdm = None
+from torch.utils.tensorboard import SummaryWriter
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -30,6 +35,14 @@ from prediction.utils.model_dispatch import (
     forward_prediction_model,
     normalize_prediction_model_type,
 )
+
+
+def resolve_project_relative(path: str) -> str:
+    """Resolve a path relative to the project root when it is not absolute."""
+    p = Path(path)
+    if p.is_absolute():
+        return str(p)
+    return str(PROJECT_ROOT / p)
 
 
 def set_seed(seed: int) -> None:
@@ -92,12 +105,14 @@ def build_dataloader(
     resize: int,
     crop: int,
     shuffle: bool,
+    reference_image_root: Optional[str] = None,
 ) -> DataLoader:
     dataset = PredictionDataset(
         data_pkl_path=data_path,
         resize=resize,
         crop=crop,
         require_label=True,
+        reference_image_root=reference_image_root,
     )
     return DataLoader(
         dataset,
@@ -118,12 +133,14 @@ def build_split_dataloaders(
     train_ratio: float,
     val_ratio: float,
     test_ratio: float,
+    reference_image_root: Optional[str] = None,
 ) -> Tuple[DataLoader, DataLoader]:
     dataset = PredictionDataset(
         data_pkl_path=data_path,
         resize=resize,
         crop=crop,
         require_label=True,
+        reference_image_root=reference_image_root,
     )
     total_size = len(dataset)
     if total_size < 3:
@@ -193,6 +210,9 @@ def run_epoch(
     criterion: torch.nn.Module,
     device: torch.device,
     optimizer: Optional[torch.optim.Optimizer] = None,
+    epoch_idx: Optional[int] = None,
+    split_name: str = "train",
+    enable_tqdm: bool = True,
 ) -> Tuple[float, Dict[str, object]]:
     is_train = optimizer is not None
     model.train(is_train)
@@ -202,7 +222,14 @@ def run_epoch(
     all_probs = []
     all_labels = []
 
-    for batch in dataloader:
+    iterator = dataloader
+    if enable_tqdm and tqdm is not None:
+        desc = split_name
+        if epoch_idx is not None:
+            desc = f"Epoch {epoch_idx:03d} [{split_name}]"
+        iterator = tqdm(dataloader, desc=desc, dynamic_ncols=True, leave=False)
+
+    for batch_idx, batch in enumerate(iterator, start=1):
         batch = move_batch_to_device(batch, device)
         labels = batch["label"]
         if labels is None:
@@ -223,6 +250,13 @@ def run_epoch(
         all_labels.append(labels.detach().cpu())
         total_loss += loss.item()
         total_batches += 1
+
+        if enable_tqdm and tqdm is not None and hasattr(iterator, "set_postfix"):
+            if batch_idx == 1 or batch_idx % 10 == 0:
+                iterator.set_postfix(
+                    loss=f"{loss.item():.4f}",
+                    avg=f"{(total_loss / total_batches):.4f}",
+                )
 
     if total_batches == 0:
         raise ValueError("Dataloader returned zero batches.")
@@ -256,11 +290,32 @@ def main() -> None:
     output_dir = config.get("output_dir", "output/prediction_tdsig")
     os.makedirs(output_dir, exist_ok=True)
 
+    if config.get("tensorboard_dir"):
+        tensorboard_dir = resolve_project_relative(str(config["tensorboard_dir"]))
+    elif config.get("log_dir"):
+        tensorboard_dir = resolve_project_relative(
+            os.path.join(str(config["log_dir"]), "tensorboard")
+        )
+    else:
+        out_leaf = Path(output_dir).name
+        tensorboard_dir = str(PROJECT_ROOT / "logs" / "prediction" / out_leaf)
+    os.makedirs(tensorboard_dir, exist_ok=True)
+
     batch_size = int(config.get("batch_size", 4))
     num_workers = int(config.get("num_workers", 0))
     resize = int(config.get("resize", 224))
     crop = int(config.get("crop", 224))
     seed = int(config.get("seed", 42))
+    enable_tqdm = bool(config.get("enable_tqdm", True))
+    if enable_tqdm and tqdm is None:
+        print("tqdm is not installed; falling back to plain loop logging.")
+    tb_writer = SummaryWriter(log_dir=tensorboard_dir)
+    print(f"TensorBoard logging enabled: {tensorboard_dir}")
+
+    ref_root_raw = config.get("reference_image_root")
+    reference_image_root = (
+        resolve_project_relative(str(ref_root_raw)) if ref_root_raw else None
+    )
 
     # Preferred mode: split disease-prediction input file in prediction pipeline.
     data_path = config.get("data_path", None)
@@ -275,6 +330,7 @@ def main() -> None:
             train_ratio=float(config.get("train_ratio", 0.7)),
             val_ratio=float(config.get("val_ratio", 0.15)),
             test_ratio=float(config.get("test_ratio", 0.15)),
+            reference_image_root=reference_image_root,
         )
         print(f"Using single prediction data file with split: {data_path}")
     else:
@@ -286,6 +342,7 @@ def main() -> None:
             resize=resize,
             crop=crop,
             shuffle=True,
+            reference_image_root=reference_image_root,
         )
         val_loader = None
         if config.get("val_data_path", None):
@@ -296,6 +353,7 @@ def main() -> None:
                 resize=resize,
                 crop=crop,
                 shuffle=False,
+                reference_image_root=reference_image_root,
             )
 
     model_type = normalize_prediction_model_type(str(config.get("model_type", "tdsig")))
@@ -363,6 +421,9 @@ def main() -> None:
             criterion=criterion,
             device=device,
             optimizer=optimizer,
+            epoch_idx=epoch,
+            split_name="train",
+            enable_tqdm=enable_tqdm,
         )
 
         if val_loader is not None:
@@ -373,6 +434,9 @@ def main() -> None:
                     criterion=criterion,
                     device=device,
                     optimizer=None,
+                    epoch_idx=epoch,
+                    split_name="val",
+                    enable_tqdm=enable_tqdm,
                 )
         else:
             val_loss, val_metrics = train_loss, train_metrics
@@ -419,6 +483,24 @@ def main() -> None:
             disease_names=disease_names,
         ):
             print(f"  [val]   {line}")
+
+        if tb_writer is not None:
+            tb_writer.add_scalar("train/macro_auroc", float(train_metrics["macro_auroc"]), epoch)
+            tb_writer.add_scalar("train/macro_auprc", float(train_metrics["macro_auprc"]), epoch)
+            tb_writer.add_scalar("val/macro_auroc", float(val_metrics["macro_auroc"]), epoch)
+            tb_writer.add_scalar("val/macro_auprc", float(val_metrics["macro_auprc"]), epoch)
+
+            for idx, score in enumerate(train_metrics["per_label_auroc"]):
+                tb_writer.add_scalar(f"train/per_label_auroc/{disease_names[idx]}", float(score), epoch)
+            for idx, score in enumerate(train_metrics["per_label_auprc"]):
+                tb_writer.add_scalar(f"train/per_label_auprc/{disease_names[idx]}", float(score), epoch)
+            for idx, score in enumerate(val_metrics["per_label_auroc"]):
+                tb_writer.add_scalar(f"val/per_label_auroc/{disease_names[idx]}", float(score), epoch)
+            for idx, score in enumerate(val_metrics["per_label_auprc"]):
+                tb_writer.add_scalar(f"val/per_label_auprc/{disease_names[idx]}", float(score), epoch)
+
+    if tb_writer is not None:
+        tb_writer.close()
 
     print(f"Training finished. Best checkpoint: {best_ckpt_path}")
     print(f"Last checkpoint: {last_ckpt_path}")

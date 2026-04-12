@@ -20,6 +20,84 @@ from models.TimePointSelector import TimePointSelector
 from torchvision.utils import save_image
 from utils.project_paths import resolve_pubmedbert_source, resolve_sd_model_source
 
+class EpochMetricsPrinter(pl.Callback):
+    """Print train epoch metrics after each training epoch; val metrics after validation."""
+
+    def __init__(self, stage):
+        super().__init__()
+        self.stage = int(stage)
+
+    @staticmethod
+    def _as_float(value):
+        if value is None:
+            return None
+        if isinstance(value, torch.Tensor):
+            if value.numel() == 0:
+                return None
+            return float(value.detach().cpu().item())
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        if not trainer.is_global_zero:
+            return
+
+        train_key = f"train_loss_s{self.stage}_epoch"
+        train_loss = self._as_float(trainer.callback_metrics.get(train_key))
+        if train_loss is None:
+            return
+
+        trainer.print(
+            f"epoch={trainer.current_epoch} | {train_key}={train_loss:.6f}"
+        )
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        # Skip sanity-check validation and non-zero ranks.
+        if trainer.sanity_checking or not trainer.is_global_zero:
+            return
+
+        metrics = trainer.callback_metrics
+        val_key = f"val_loss_s{self.stage}_epoch"
+
+        val_loss = self._as_float(metrics.get(val_key))
+        if val_loss is None:
+            return
+
+        trainer.print(
+            f"epoch={trainer.current_epoch} | {val_key}={val_loss:.6f}"
+        )
+
+
+class TrainingProgressBar(pl.callbacks.TQDMProgressBar):
+    """Includes running train epoch loss in the bar (Lightning updates *_epoch during the epoch)."""
+
+    def __init__(self, stage, refresh_rate=1):
+        super().__init__(refresh_rate=refresh_rate)
+        self._stage = int(stage)
+
+    @staticmethod
+    def _as_float(value):
+        if value is None:
+            return None
+        if isinstance(value, torch.Tensor):
+            if value.numel() == 0:
+                return None
+            return float(value.detach().cpu().item())
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def get_metrics(self, trainer, pl_module):
+        metrics = super().get_metrics(trainer, pl_module)
+        train_epoch_key = f"train_loss_s{self._stage}_epoch"
+        v = self._as_float(trainer.callback_metrics.get(train_epoch_key))
+        if v is not None:
+            metrics[train_epoch_key] = round(v, 6)
+        return metrics
+
 class ControlGenDataModule(pl.LightningDataModule):
     def __init__(self, config):
         super().__init__()
@@ -460,7 +538,7 @@ class ControlGenModel(pl.LightningModule):
         loss = F.mse_loss(inferred_abn_features, abn_features_gt)
         self.log(
             "train_loss_s1",
-            loss,
+            loss.detach().item(),
             prog_bar=True,
             on_step=True,
             on_epoch=True,
@@ -536,7 +614,7 @@ class ControlGenModel(pl.LightningModule):
         loss = F.mse_loss(inferred_abn_features, abn_features_gt)
         self.log(
             f"{prefix}_loss_s1",
-            loss,
+            loss.detach().item(),
             prog_bar=True,
             on_step=True,
             on_epoch=True,
@@ -630,7 +708,7 @@ class ControlGenModel(pl.LightningModule):
         loss = F.mse_loss(noise_pred, noise)
         self.log(
             "train_loss_s2",
-            loss,
+            loss.detach().item(),
             prog_bar=True,
             on_step=True,
             on_epoch=True,
@@ -717,7 +795,7 @@ class ControlGenModel(pl.LightningModule):
         loss = F.mse_loss(noise_pred, noise)
         self.log(
             f"{prefix}_loss_s2",
-            loss,
+            loss.detach().item(),
             prog_bar=True,
             on_step=True,
             on_epoch=True,
@@ -798,17 +876,18 @@ def main(config):
         mode='min',
     )
 
-    # Keep finished epoch bars in terminal so metric history is visible.
-    progress_bar_callback = pl.callbacks.TQDMProgressBar(
+    # Use version-compatible args for older Lightning releases.
+    progress_bar_callback = TrainingProgressBar(
+        stage=config['stage'],
         refresh_rate=config.get('progress_bar_refresh_rate', 1),
-        leave=config.get('progress_bar_leave', True),
     )
+    epoch_metrics_printer = EpochMetricsPrinter(stage=config['stage'])
     
     trainer = pl.Trainer(
         accelerator='gpu' if torch.cuda.is_available() else 'cpu',
         devices=1,
         max_epochs=config['epochs'],
-        callbacks=[checkpoint_callback, progress_bar_callback],
+        callbacks=[checkpoint_callback, progress_bar_callback, epoch_metrics_printer],
         logger=pl.loggers.TensorBoardLogger(save_dir=config['log_dir']),
     )
     

@@ -14,8 +14,8 @@ class PredictionDataset(Dataset):
 
     Required fields per patient sample:
     - lab_test_data, lab_test_time, lab_test_mask
-    - reference_image_path
-    - target_image_path_list (or backward-compatible target_image_path)
+    - reference_image_path (relative paths join reference_image_root when set, else pickle dir / cwd)
+    - target_image_path_list (or backward-compatible target_image_path); prefer absolute paths
     - reference_image_time, target_image_time_list (aligned with paths; required)
     - disease_prediction_label (required only when require_label=True)
     """
@@ -26,12 +26,18 @@ class PredictionDataset(Dataset):
         resize: int = 512,
         crop: int = 512,
         require_label: bool = True,
+        reference_image_root: Optional[str] = None,
     ) -> None:
         self.data_pkl_path = data_pkl_path
         self.resize = resize
         self.crop = crop
         self.require_label = require_label
         self.base_dir = os.path.dirname(os.path.abspath(self.data_pkl_path))
+        self.reference_image_root = (
+            os.path.abspath(reference_image_root)
+            if reference_image_root
+            else None
+        )
 
         with open(self.data_pkl_path, "rb") as f:
             self.data: Dict[str, Dict[str, Any]] = pickle.load(f)
@@ -43,27 +49,56 @@ class PredictionDataset(Dataset):
     def __len__(self) -> int:
         return len(self.patient_ids)
 
-    def _resolve_image_path(self, image_path: Optional[str]) -> str:
+    def _resolve_reference_image_path(self, image_path: Optional[str]) -> str:
+        """Resolve reference_image_path; optional reference_image_root prepends relative paths."""
         if image_path is None or image_path == "":
             raise FileNotFoundError("Image path is empty.")
 
-        candidates = []
+        candidates: List[str] = []
         if os.path.isabs(image_path):
             candidates.append(image_path)
         else:
-            candidates.append(image_path)
+            if self.reference_image_root:
+                candidates.append(os.path.join(self.reference_image_root, image_path))
             candidates.append(os.path.join(self.base_dir, image_path))
+            candidates.append(image_path)
 
         for path in candidates:
             if os.path.exists(path):
                 return os.path.abspath(path)
 
         raise FileNotFoundError(
-            f"Image path '{image_path}' does not exist. Checked: {candidates}"
+            f"Reference image path '{image_path}' does not exist. Checked: {candidates}"
         )
 
-    def _load_image(self, image_path: str) -> torch.Tensor:
-        resolved_path = self._resolve_image_path(image_path)
+    def _resolve_target_image_path(self, image_path: Optional[str]) -> str:
+        """Resolve generated/target image paths (expected absolute; no reference_image_root)."""
+        if image_path is None or image_path == "":
+            raise FileNotFoundError("Image path is empty.")
+
+        candidates: List[str] = []
+        if os.path.isabs(image_path):
+            candidates.append(image_path)
+        else:
+            candidates.append(os.path.join(self.base_dir, image_path))
+            candidates.append(image_path)
+
+        for path in candidates:
+            if os.path.exists(path):
+                return os.path.abspath(path)
+
+        raise FileNotFoundError(
+            f"Target image path '{image_path}' does not exist (use absolute paths or "
+            f"paths relative to the pickle directory). Checked: {candidates}"
+        )
+
+    def _load_reference_image(self, image_path: str) -> torch.Tensor:
+        resolved_path = self._resolve_reference_image_path(image_path)
+        image = Image.open(resolved_path).convert("RGB")
+        return self._transform_image(image)
+
+    def _load_target_image(self, image_path: str) -> torch.Tensor:
+        resolved_path = self._resolve_target_image_path(image_path)
         image = Image.open(resolved_path).convert("RGB")
         return self._transform_image(image)
 
@@ -157,7 +192,7 @@ class PredictionDataset(Dataset):
         lab_times = torch.tensor(sample["lab_test_time"], dtype=torch.float32)
         lab_mask = torch.tensor(sample["lab_test_mask"], dtype=torch.float32)
 
-        ref_img = self._load_image(sample["reference_image_path"])
+        ref_img = self._load_reference_image(sample["reference_image_path"])
 
         if "reference_image_time" not in sample:
             raise KeyError(
@@ -172,7 +207,7 @@ class PredictionDataset(Dataset):
         )
         generated_images: List[torch.Tensor] = []
         for path in generated_paths:
-            generated_images.append(self._load_image(path))
+            generated_images.append(self._load_target_image(path))
 
         if generated_images:
             gen_imgs = torch.stack(generated_images, dim=0)

@@ -12,6 +12,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+
+def resolve_project_relative(path: str) -> str:
+    """Resolve a path relative to the project root when it is not absolute."""
+    p = Path(path)
+    if p.is_absolute():
+        return str(p)
+    return str(PROJECT_ROOT / p)
+
 from prediction.data import PredictionCollate, PredictionDataset
 from prediction.utils.metrics import (
     compute_multilabel_auroc_auprc,
@@ -71,6 +79,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Device override: cpu/cuda. Default auto-detect.",
     )
+    parser.add_argument(
+        "--reference_image_root",
+        type=str,
+        default=None,
+        help="Override checkpoint config: directory prepended to relative reference_image_path.",
+    )
     return parser.parse_args()
 
 
@@ -106,11 +120,21 @@ def main() -> None:
     resize = args.resize if args.resize is not None else int(ckpt_config.get("resize", 224))
     crop = args.crop if args.crop is not None else int(ckpt_config.get("crop", 224))
 
+    ref_root_raw = (
+        args.reference_image_root
+        if args.reference_image_root is not None
+        else ckpt_config.get("reference_image_root")
+    )
+    reference_image_root = (
+        resolve_project_relative(str(ref_root_raw)) if ref_root_raw else None
+    )
+
     dataset = PredictionDataset(
         data_pkl_path=args.input_pkl,
         resize=resize,
         crop=crop,
         require_label=False,
+        reference_image_root=reference_image_root,
     )
     dataloader = DataLoader(
         dataset,

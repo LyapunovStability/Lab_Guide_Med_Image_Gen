@@ -3,6 +3,7 @@ import os
 import yaml
 import pickle
 import torch
+import torch.nn as nn
 import numpy as np
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -32,8 +33,28 @@ def load_model(config_path, checkpoint_path, device):
     config['stage'] = 2
     
     print(f"Loading model from {checkpoint_path}")
-    # Load model from checkpoint
-    model = ControlGenModel.load_from_checkpoint(checkpoint_path, config=config)
+    # Build model first, materialize lazy layer, then load checkpoint state dict.
+    # This ensures lab_test_projection.* weights can be matched and loaded.
+    model = ControlGenModel(config)
+    if hasattr(model, "lab_test_encoder") and not hasattr(model.lab_test_encoder, "lab_test_projection"):
+        d_model = int(model.lab_test_encoder.d_model)
+        model.lab_test_encoder.lab_test_projection = nn.Sequential(
+            nn.Linear(d_model + 1, d_model),
+            nn.ReLU(),
+            nn.Linear(d_model, d_model),
+        )
+
+    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    state_dict = checkpoint["state_dict"] if isinstance(checkpoint, dict) and "state_dict" in checkpoint else checkpoint
+    load_ret = model.load_state_dict(state_dict, strict=False)
+    print(f"[load_state_dict] unexpected_keys={len(load_ret.unexpected_keys)}, missing_keys={len(load_ret.missing_keys)}")
+    if load_ret.unexpected_keys:
+        for k in load_ret.unexpected_keys[:20]:
+            print(f"  unexpected: {k}")
+    if load_ret.missing_keys:
+        for k in load_ret.missing_keys[:20]:
+            print(f"  missing: {k}")
+
     model.to(device)
     model.eval()
     
@@ -52,10 +73,12 @@ def main():
     
     # 2. Load Dataset
     print(f"Loading inference data from {args.input_data}")
+    img_root = config.get('image_root_path') or config.get('image_root_dir')
     dataset = InferenceDataset(
         data_pkl_path=args.input_data,
         resize=config.get('resize', 512),
-        crop=config.get('crop', 512)
+        crop=config.get('crop', 512),
+        image_root_path=img_root,
     )
     
     dataloader = DataLoader(

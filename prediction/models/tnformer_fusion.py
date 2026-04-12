@@ -71,8 +71,11 @@ class TemporalNeighboringAggregator(nn.Module):
 
         diff_sq = (lab_times.unsqueeze(2) - img_times.unsqueeze(1)).pow(2)
         mask_k = img_event_mask.unsqueeze(1).expand(b, t_lab, k)
-        neg_inf = torch.finfo(diff_sq.dtype).min / 4
-        diff_sq_masked = diff_sq.masked_fill(~mask_k, neg_inf)
+        # Invalid image events should get near-zero attention weight.
+        # Since logits = -alpha * diff_sq, masked positions must use very large
+        # positive diff_sq so that logits -> very negative (not very positive).
+        pos_inf = torch.finfo(diff_sq.dtype).max / 4
+        diff_sq_masked = diff_sq.masked_fill(~mask_k, pos_inf)
 
         alpha = F.softplus(self.kernel_param)  # (num_scales, d_sub)
 

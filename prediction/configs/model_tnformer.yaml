@@ -4,6 +4,8 @@ model_type: "tnformer"
 seed: 2025
 
 data_path: "data/data_for_gen_infer_with_tar_img.pkl"
+reference_image_root: "mnt/file1"
+
 train_ratio: 0.7
 val_ratio: 0.15
 test_ratio: 0.15
@@ -11,9 +13,9 @@ test_ratio: 0.15
 resize: 224
 crop: 224
 
-batch_size: 4
+batch_size: 16
 num_workers: 0
-epochs: 5
+epochs: 100
 learning_rate: 0.001
 weight_decay: 0.0001
 output_dir: "output/prediction_tnformer"
