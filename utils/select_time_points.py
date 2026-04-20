@@ -1,14 +1,24 @@
 """
-Standalone script for selecting generation time points T_gen.
+Offline TimePointSelector: train (Poisson NLL) and/or select generation times T_gen.
 
-This script uses the TimePointSelection module to compute temporal density
-and select generation time points for each patient. It ensures constant |T_gen|
-across all patients and saves the results for use in training/inference.
+**Shell (no subcommands):** provide ``--lab_test_data_path`` and at least one of
+``--output_state_path`` (train) or ``--output_path`` (select). If both are set,
+the script trains first, then runs selection using the newly saved weights.
+
+  python utils/select_time_points.py \\
+      --lab_test_data_path DATA.pkl \\
+      --output_state_path selector.pt --output_path OUT.pkl --merge_with_data
+
+Python API: ``run_train_then_select``, ``train_time_point_selector_on_pickle``,
+``select_time_points_for_patients``, ``run_time_point_selection`` (yaml-driven).
 """
 
 import argparse
 import os
 import pickle
+import random
+from typing import Any, Dict, List, Optional
+
 import numpy as np
 import pandas as pd
 import torch
@@ -16,6 +26,132 @@ import yaml
 from tqdm import tqdm
 
 from models.TimePointSelector import TimePointSelector
+
+
+def _lab_presence_mask_1d(lab_mask: Any, device: torch.device) -> torch.Tensor:
+    """(L, D) lab mask -> (1, L) float {0,1} indicating any observed lab at that time."""
+    if isinstance(lab_mask, np.ndarray):
+        lab_mask = torch.from_numpy(lab_mask).float()
+    elif not torch.is_tensor(lab_mask):
+        lab_mask = torch.as_tensor(lab_mask, dtype=torch.float32)
+    lab_mask = lab_mask.to(device)
+    if lab_mask.dim() != 2:
+        raise ValueError(f"lab_test_mask expected 2D (L, D), got shape {tuple(lab_mask.shape)}")
+    present = (lab_mask > 0.5).any(dim=-1).float()
+    return present.unsqueeze(0)
+
+
+def _density_for_times(selector: TimePointSelector, time_points: torch.Tensor) -> torch.Tensor:
+    """Same normalization as select_fixed_number / compute_loss."""
+    time_min = time_points.min(dim=1, keepdim=True)[0]
+    time_max = time_points.max(dim=1, keepdim=True)[0]
+    time_range = (time_max - time_min).clamp(min=1e-6)
+    time_normalized = (time_points - time_min) / time_range
+    return selector.ode_network(time_normalized)
+
+
+def train_time_point_selector_on_pickle(
+    lab_test_data_path: str,
+    output_state_path: str,
+    epochs: int = 20,
+    learning_rate: float = 1e-3,
+    device: str = "cuda",
+    hidden_dim: int = 64,
+    num_ode_layers: int = 3,
+    seed: int = 2025,
+    max_patients: Optional[int] = None,
+    log_prefix: str = "[train_time_selector]",
+    print_each_step: bool = False,
+) -> None:
+    """
+    Fit TimePointSelector on lab observation times using Poisson-process NLL in compute_loss.
+
+    Saves a small checkpoint dict loadable by select_time_points_for_patients(selector_state_path=...).
+    Trains one patient per step (variable-length sequences); no padding artifacts.
+    """
+    if device == "cuda" and not torch.cuda.is_available():
+        print("CUDA not available, using CPU")
+        device = "cpu"
+    dev = torch.device(device)
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+    with open(lab_test_data_path, "rb") as f:
+        lab_test_data: Dict[str, Any] = pickle.load(f)
+    patient_ids: List[str] = list(lab_test_data.keys())
+    if max_patients is not None:
+        patient_ids = patient_ids[: int(max_patients)]
+
+    selector = TimePointSelector(
+        hidden_dim=hidden_dim,
+        num_ode_layers=num_ode_layers,
+    ).to(dev)
+    selector.train()
+    optimizer = torch.optim.AdamW(selector.parameters(), lr=learning_rate)
+
+    for epoch in range(epochs):
+        random.shuffle(patient_ids)
+        epoch_losses: List[float] = []
+        for patient_id in patient_ids:
+            sample = lab_test_data[patient_id]
+            time_points = sample.get("lab_test_time")
+            lab_mask = sample.get("lab_test_mask")
+            if time_points is None or lab_mask is None:
+                continue
+            if isinstance(time_points, np.ndarray):
+                time_points = torch.from_numpy(time_points).float()
+            elif not torch.is_tensor(time_points):
+                time_points = torch.as_tensor(time_points, dtype=torch.float32)
+            if time_points.dim() == 1:
+                time_points = time_points.unsqueeze(0)
+            time_points = time_points.to(dev)
+            if time_points.shape[1] < 1:
+                continue
+
+            presence = _lab_presence_mask_1d(lab_mask, dev)
+            if presence.sum() < 1e-6:
+                continue
+
+            optimizer.zero_grad(set_to_none=True)
+            density = _density_for_times(selector, time_points)
+            loss = selector.compute_loss(time_points, presence, density)
+            if not torch.isfinite(loss):
+                continue
+            loss.backward()
+            optimizer.step()
+            lv = float(loss.detach().cpu())
+            epoch_losses.append(lv)
+            if print_each_step:
+                print(
+                    f"{log_prefix} epoch {epoch + 1}/{epochs} step patient={patient_id} loss={lv:.6f}",
+                    flush=True,
+                )
+
+        mean_loss = float(np.mean(epoch_losses)) if epoch_losses else float("nan")
+        print(
+            f"{log_prefix} epoch {epoch + 1}/{epochs} mean_loss={mean_loss:.6f} n_steps={len(epoch_losses)}",
+            flush=True,
+        )
+
+    selector.eval()
+    out_dir = os.path.dirname(output_state_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    payload = {
+        "state_dict": selector.state_dict(),
+        "hidden_dim": hidden_dim,
+        "num_ode_layers": num_ode_layers,
+        "epochs": epochs,
+        "learning_rate": learning_rate,
+        "seed": seed,
+        "lab_test_data_path": lab_test_data_path,
+    }
+    torch.save(payload, output_state_path)
+    print(f"[train_time_selector] saved weights to {output_state_path}")
 
 
 def select_time_points_for_patients(
@@ -28,7 +164,8 @@ def select_time_points_for_patients(
     peak_distance: int = 1,
     device: str = 'cpu',
     output_format: str = 'pkl',
-    merge_with_data: bool = False
+    merge_with_data: bool = False,
+    selector_state_path: Optional[str] = None,
 ):
     """
     Select generation time points for all patients.
@@ -44,6 +181,7 @@ def select_time_points_for_patients(
         device: Device to run computation on ('cpu' or 'cuda')
         output_format: Output format ('pkl' or 'csv')
         merge_with_data: If True, merges selected time points into the original data dictionary and saves the full dataset.
+        selector_state_path: If set, load TimePointSelector weights from train_time_point_selector_on_pickle checkpoint.
     """
     # Load lab test data
     print(f"Loading lab test data from {lab_test_data_path}...")
@@ -60,6 +198,16 @@ def select_time_points_for_patients(
         peak_prominence=peak_prominence,
         peak_distance=peak_distance
     ).to(device)
+    if selector_state_path:
+        if not os.path.isfile(selector_state_path):
+            raise FileNotFoundError(f"selector_state_path not found: {selector_state_path}")
+        ckpt = torch.load(selector_state_path, map_location=device)
+        state_dict = ckpt["state_dict"] if isinstance(ckpt, dict) and "state_dict" in ckpt else ckpt
+        ret = time_point_selector.load_state_dict(state_dict, strict=False)
+        print(
+            f"Loaded TimePointSelector weights from {selector_state_path} "
+            f"(missing={len(ret.missing_keys)}, unexpected={len(ret.unexpected_keys)})"
+        )
     time_point_selector.eval()
     
     # Dictionary to store T_gen for each patient
@@ -178,6 +326,60 @@ def select_time_points_for_patients(
     print("Time point selection completed!")
 
 
+def run_train_then_select(
+    lab_test_data_path: str,
+    output_state_path: str,
+    output_path: str,
+    num_gen_points: int = 3,
+    epochs: int = 20,
+    learning_rate: float = 1e-3,
+    device: str = "cuda",
+    hidden_dim: int = 64,
+    num_ode_layers: int = 3,
+    peak_prominence: float = 0.1,
+    peak_distance: int = 1,
+    seed: int = 2025,
+    max_patients: Optional[int] = None,
+    merge_with_data: bool = False,
+    output_format: str = "pkl",
+    log_prefix: str = "[pipeline]",
+    print_each_step: bool = False,
+) -> None:
+    """
+    Train TimePointSelector on ``lab_test_data_path``, save to ``output_state_path``,
+    then run ``select_time_points_for_patients`` on the same pickle using those weights.
+    """
+    print(f"{log_prefix} step 1/2: training -> {output_state_path}", flush=True)
+    train_time_point_selector_on_pickle(
+        lab_test_data_path=lab_test_data_path,
+        output_state_path=output_state_path,
+        epochs=epochs,
+        learning_rate=learning_rate,
+        device=device,
+        hidden_dim=hidden_dim,
+        num_ode_layers=num_ode_layers,
+        seed=seed,
+        max_patients=max_patients,
+        log_prefix=f"{log_prefix}[train]",
+        print_each_step=print_each_step,
+    )
+    print(f"{log_prefix} step 2/2: selecting -> {output_path}", flush=True)
+    select_time_points_for_patients(
+        lab_test_data_path=lab_test_data_path,
+        output_path=output_path,
+        num_gen_points=num_gen_points,
+        hidden_dim=hidden_dim,
+        num_ode_layers=num_ode_layers,
+        peak_prominence=peak_prominence,
+        peak_distance=peak_distance,
+        device=device,
+        output_format=output_format,
+        merge_with_data=merge_with_data,
+        selector_state_path=output_state_path,
+    )
+    print(f"{log_prefix} train + select completed.", flush=True)
+
+
 def run_time_point_selection(
     config: str = None,
     lab_test_data_path: str = None,
@@ -189,7 +391,8 @@ def run_time_point_selection(
     peak_distance: int = 1,
     device: str = 'cpu',
     output_format: str = 'pkl',
-    merge_with_data: bool = False
+    merge_with_data: bool = False,
+    selector_state_path: Optional[str] = None,
 ):
     """
     Function to select generation time points.
@@ -210,6 +413,7 @@ def run_time_point_selection(
         device = config_data.get('device', device)
         output_format = config_data.get('t_gen_output_format', output_format)
         merge_with_data = config_data.get('merge_with_data', merge_with_data)
+        selector_state_path = config_data.get('selector_state_path', selector_state_path)
     
     if not lab_test_data_path or not output_path:
         raise ValueError("Must provide either 'config' or both 'lab_test_data_path' and 'output_path'")
@@ -229,8 +433,115 @@ def run_time_point_selection(
         peak_distance=peak_distance,
         device=device,
         output_format=output_format,
-        merge_with_data=merge_with_data
+        merge_with_data=merge_with_data,
+        selector_state_path=selector_state_path,
     )
 
 
+def main_cli() -> None:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Train and/or select generation time points. "
+            "Provide --output_state_path to train, --output_path to select; "
+            "both together runs train then select (same --lab_test_data_path)."
+        )
+    )
+    parser.add_argument("--lab_test_data_path", type=str, required=True)
+    parser.add_argument(
+        "--output_state_path",
+        type=str,
+        default=None,
+        help="If set: train TimePointSelector and save weights to this .pt path.",
+    )
+    parser.add_argument(
+        "--output_path",
+        type=str,
+        default=None,
+        help="If set: run time-point selection and write results to this path.",
+    )
+    parser.add_argument("--merge_with_data", action="store_true")
+    parser.add_argument("--num_gen_points", type=int, default=3)
+    parser.add_argument("--epochs", type=int, default=20)
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--hidden_dim", type=int, default=64)
+    parser.add_argument("--num_ode_layers", type=int, default=3)
+    parser.add_argument("--seed", type=int, default=2025)
+    parser.add_argument("--max_patients", type=int, default=None)
+    parser.add_argument("--verbose_steps", action="store_true", help="Print per-patient loss during training.")
+    parser.add_argument(
+        "--selector_state_path",
+        type=str,
+        default=None,
+        help="Select-only: load weights from this .pt. Ignored when --output_state_path is set (train+select uses new weights).",
+    )
+    parser.add_argument("--peak_prominence", type=float, default=0.1)
+    parser.add_argument("--peak_distance", type=int, default=1)
+    parser.add_argument("--output_format", type=str, default="pkl", choices=("pkl", "csv"))
+    args = parser.parse_args()
+
+    if not args.output_state_path and not args.output_path:
+        parser.error("Provide at least one of --output_state_path (train) or --output_path (select).")
+
+    if args.output_state_path and args.output_path:
+        run_train_then_select(
+            lab_test_data_path=args.lab_test_data_path,
+            output_state_path=args.output_state_path,
+            output_path=args.output_path,
+            num_gen_points=args.num_gen_points,
+            epochs=args.epochs,
+            learning_rate=args.lr,
+            device=args.device,
+            hidden_dim=args.hidden_dim,
+            num_ode_layers=args.num_ode_layers,
+            peak_prominence=args.peak_prominence,
+            peak_distance=args.peak_distance,
+            seed=args.seed,
+            max_patients=args.max_patients,
+            merge_with_data=args.merge_with_data,
+            output_format=args.output_format,
+            print_each_step=args.verbose_steps,
+        )
+    elif args.output_state_path:
+        train_time_point_selector_on_pickle(
+            lab_test_data_path=args.lab_test_data_path,
+            output_state_path=args.output_state_path,
+            epochs=args.epochs,
+            learning_rate=args.lr,
+            device=args.device,
+            hidden_dim=args.hidden_dim,
+            num_ode_layers=args.num_ode_layers,
+            seed=args.seed,
+            max_patients=args.max_patients,
+            print_each_step=args.verbose_steps,
+        )
+    else:
+        select_time_points_for_patients(
+            lab_test_data_path=args.lab_test_data_path,
+            output_path=args.output_path,
+            num_gen_points=args.num_gen_points,
+            hidden_dim=args.hidden_dim,
+            num_ode_layers=args.num_ode_layers,
+            peak_prominence=args.peak_prominence,
+            peak_distance=args.peak_distance,
+            device=args.device,
+            output_format=args.output_format,
+            merge_with_data=args.merge_with_data,
+            selector_state_path=args.selector_state_path,
+        )
+
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) >= 2 and not sys.argv[1].startswith("-"):
+        print(
+            f"Invalid first argument {sys.argv[1]!r}: this script has no subcommands. "
+            "Use flags only, for example:\n"
+            "  python utils/select_time_points.py --lab_test_data_path DATA.pkl "
+            "--output_state_path sel.pt --output_path OUT.pkl --merge_with_data\n",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    main_cli()
 
