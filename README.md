@@ -102,10 +102,11 @@ A typical inference workflow has two steps:
 ```bash
 python utils/select_time_points.py \
   --lab_test_data_path data/data_for_gen_infer.pkl \
+  --output_state_path output/time_selector.pt \
   --output_path data/data_for_gen_infer_with_tar_points.pkl \
-  --num_gen_points 3 \
-  --device cuda \
-  --merge_with_data
+  --merge_with_data \
+  --epochs 50
+
 ```
 
 ### Run Inference Generation
